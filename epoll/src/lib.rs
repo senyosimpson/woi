@@ -6,7 +6,7 @@ use bitflags::bitflags;
 
 /// Control options for `epoll_ctl`
 #[repr(i32)]
-enum EpollCtlOp {
+pub enum CtlOp {
     /// Adds an entry to the interest list
     ADD = libc::EPOLL_CTL_ADD,
     /// Change the settings of an associated entry in the interest list
@@ -19,7 +19,7 @@ enum EpollCtlOp {
 #[repr(C)]
 #[repr(packed)]
 #[derive(Debug, Clone, Copy)]
-struct Event {
+pub struct Event {
     events: u32,
     data: u64,
 }
@@ -62,21 +62,21 @@ fn cvt(result: i32) -> io::Result<i32> {
 /// Safe wrapper around `libc::epoll_create`
 /// Manpages: https://man7.org/linux/man-pages/man2/epoll_create.2.html
 #[cfg(target_os = "linux")]
-fn create(size: i32) -> io::Result<RawFd> {
+pub fn create(size: i32) -> io::Result<RawFd> {
     cvt(unsafe { libc::epoll_create(size) })
 }
 
 /// Safe wrapper around `libc::epoll_create1`
 /// Manpages: https://man7.org/linux/man-pages/man2/epoll_create1.2.html
 #[cfg(target_os = "linux")]
-fn create1(flags: i32) -> io::Result<RawFd> {
+pub fn create1(flags: i32) -> io::Result<RawFd> {
     cvt(unsafe { libc::epoll_create1(flags) })
 }
 
 /// Safe wrapper around `libc::epoll_ctl`
 /// Manpages: https://man7.org/linux/man-pages/man2/epoll_ctl.2.html
 #[cfg(target_os = "linux")]
-fn ctl(epfd: RawFd, op: EpollCtlOp, fd: RawFd, event: &mut Event) -> io::Result<()> {
+pub fn ctl(epfd: RawFd, op: CtlOp, fd: RawFd, event: &mut Event) -> io::Result<()> {
     let event_ptr: *mut Event = event;
     cvt(unsafe { libc::epoll_ctl(epfd, op as i32, fd, event_ptr as *mut libc::epoll_event) })?;
     Ok(())
@@ -85,7 +85,7 @@ fn ctl(epfd: RawFd, op: EpollCtlOp, fd: RawFd, event: &mut Event) -> io::Result<
 /// Safe wrapper around `libc::epoll_wait`
 /// Manpages: https://man7.org/linux/man-pages/man2/epoll_wait.2.html
 #[cfg(target_os = "linux")]
-fn wait(epfd: RawFd, events: &mut [Event], maxevents: i32, timeout: i32) -> io::Result<i32> {
+pub fn wait(epfd: RawFd, events: &mut [Event], maxevents: i32, timeout: i32) -> io::Result<i32> {
     let events_ptr = events.as_mut_ptr() as *mut libc::epoll_event;
     cvt(unsafe { libc::epoll_wait(epfd, events_ptr, maxevents, timeout) })
 }
@@ -93,7 +93,7 @@ fn wait(epfd: RawFd, events: &mut [Event], maxevents: i32, timeout: i32) -> io::
 /// Safe wrapper around `libc::close`
 /// Manpages: https://man7.org/linux/man-pages/man2/close.2.html
 #[cfg(target_os = "linux")]
-fn close(fd: RawFd) -> io::Result<()> {
+pub fn close(fd: RawFd) -> io::Result<()> {
     cvt(unsafe { libc::close(fd) })?;
     Ok(())
 }
@@ -119,7 +119,7 @@ mod tests {
         let mut event = Event::new(events, 1);
 
         let socket = TcpStream::connect("localhost:3000").unwrap();
-        ctl(queue, EpollCtlOp::ADD, socket.as_raw_fd(), &mut event).unwrap();
+        ctl(queue, CtlOp::ADD, socket.as_raw_fd(), &mut event).unwrap();
         close(queue).unwrap();
     }
 
@@ -140,18 +140,14 @@ mod tests {
         let request = "GET /delay HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n";
         socket.write_all(request.as_bytes()).unwrap();
 
-        ctl(queue, EpollCtlOp::ADD, socket.as_raw_fd(), &mut event).unwrap();
+        ctl(queue, CtlOp::ADD, socket.as_raw_fd(), &mut event).unwrap();
 
         let maxevents = 10;
         let mut events: Vec<Event> = Vec::with_capacity(maxevents);
-        loop {
-            let num_events = wait(queue, &mut events, maxevents as i32, -1).unwrap();
-            println!("Received {} number of events!", num_events);
-            close(queue).unwrap();
+        let num_events = wait(queue, &mut events, maxevents as i32, -1).unwrap();
+        println!("Received {} number of events!", num_events);
+        close(queue).unwrap();
 
-            // This is very ugly. Think of a cleaner way of handling this.
-            assert_eq!(num_events, 1);
-            break;
-        }
+        assert_eq!(num_events, 1);
     }
 }
