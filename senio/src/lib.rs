@@ -57,11 +57,16 @@ impl Poll {
     }
 
     pub fn poll(&self, events: &mut Events, timeout: Option<Duration>) -> io::Result<()> {
+        events.clear();
         let timeout = match timeout {
             Some(duration) => duration.as_millis() as i32,
             None => -1,
         };
-        epoll::wait(self.fd, events, timeout)?;
+        let n_events = epoll::wait(self.fd, events, timeout)?;
+        // This is actually safe to call because epoll::wait returns the
+        // number of events that were returned
+        // Got this from Mio: https://github.com/tokio-rs/mio/blob/22e885859bb481ae4c2827ab48552c3159fcc7f8/src/sys/unix/selector/epoll.rs#L77
+        unsafe { events.set_len(n_events as usize) };
         Ok(())
     }
 }
