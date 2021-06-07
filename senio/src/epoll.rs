@@ -41,6 +41,9 @@ impl Event {
             data: 0,
         }
     }
+    pub fn token(&self) -> Token {
+        Token(self.data)
+    }
 }
 
 pub type Events = Vec<Event>;
