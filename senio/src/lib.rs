@@ -30,7 +30,7 @@ pub struct Poll {
 
 impl Poll {
     pub fn new() -> io::Result<Poll> {
-        let fd = epoll::create(1)?;
+        let fd = epoll::create()?;
 
         let poll = Poll { fd };
         Ok(poll)

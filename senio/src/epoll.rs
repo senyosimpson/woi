@@ -75,15 +75,8 @@ fn cvt(result: i32) -> io::Result<i32> {
 /// Safe wrapper around `libc::epoll_create`
 /// Manpages: https://man7.org/linux/man-pages/man2/epoll_create.2.html
 #[cfg(target_os = "linux")]
-pub(crate) fn create(size: i32) -> io::Result<RawFd> {
-    cvt(unsafe { libc::epoll_create(size) })
-}
-
-/// Safe wrapper around `libc::epoll_create1`
-/// Manpages: https://man7.org/linux/man-pages/man2/epoll_create1.2.html
-#[cfg(target_os = "linux")]
-pub(crate) fn create1(flags: i32) -> io::Result<RawFd> {
-    cvt(unsafe { libc::epoll_create1(flags) })
+pub(crate) fn create() -> io::Result<RawFd> {
+    cvt(unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) })
 }
 
 /// Safe wrapper around `libc::epoll_ctl`
@@ -118,7 +111,7 @@ mod tests {
     fn create_epoll_queue() {
         // Test it works by creating an instance of epoll and then closing it
         // If this function does not work, it will panic
-        let queue = create(1).unwrap();
+        let queue = create().unwrap();
         close(queue).unwrap();
     }
 
@@ -127,7 +120,7 @@ mod tests {
         use std::net::TcpStream;
         use std::os::unix::io::AsRawFd;
 
-        let queue = create(1).unwrap();
+        let queue = create().unwrap();
         let interest = Interest::READABLE | Interest::WRITABLE;
         let mut event = Event::new(interest, Token(1));
 
@@ -142,7 +135,7 @@ mod tests {
         use std::net::TcpStream;
         use std::os::unix::io::AsRawFd;
 
-        let queue = create(1).unwrap();
+        let queue = create().unwrap();
         let interest = Interest::READABLE;
         let mut event = Event::new(interest, Token(1));
 
