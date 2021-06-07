@@ -5,7 +5,8 @@ use std::{
 };
 
 mod epoll;
-use epoll::{CtlOp, Event, Events, Interest, Token};
+use epoll::CtlOp;
+pub use epoll::{Event, Events, Interest, Token};
 
 pub trait Source {
     fn raw_fd(&self) -> RawFd;
