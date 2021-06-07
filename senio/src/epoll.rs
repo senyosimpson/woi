@@ -15,7 +15,7 @@ pub(crate) enum CtlOp {
     DEL = libc::EPOLL_CTL_DEL,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Token(pub u64);
 
 /// An equivalent of `libc::epoll_data`
