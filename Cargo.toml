@@ -1,5 +1,8 @@
 [workspace]
 
 members = [
-    "senio"
+    "epoll",
+    "future",
+    "net",
+    "io"
 ]
