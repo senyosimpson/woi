@@ -1,10 +1,15 @@
 // TcpListener, TcpStream, Incoming
-use std::{io, net::SocketAddr};
+use std::io;
 
-use crate::addr::ToSocketAddrs;
+use crate::io::AsyncRead;
+use super::addr::ToSocketAddrs;
 
 pub struct TcpListener {
     inner: std::net::TcpListener,
+}
+
+pub struct TcpStream {
+    inner: std::net::TcpStream
 }
 
 impl TcpListener {
@@ -24,19 +29,30 @@ impl TcpListener {
             }
         }
 
-        err
+        Err(err.unwrap_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "could not connect to any of the addresses",
+            )
+        }))
     }
 
-    pub async fn accept<A: ToSocketAddrs>(addr: A) -> io::Result<(TcpStream, SocketAddr)> {
-        let listener = TcpListener::bind(addr).await?;
-        match listener.accept() {
+    // pub async fn accept<A: ToSocketAddrs>(addr: A) -> io::Result<(net::TcpStream, SocketAddr)> {
+        // let listener = TcpListener::bind(addr).await?;
+        // // match listener.inner.accept() {
 
-        }
-    }
+        // // }
+    // }
 
     pub fn local_addr() {}
 
     pub fn ttl() {}
 
     pub fn set_ttl() {}
+}
+
+impl TcpStream {}
+
+impl AsyncRead for TcpStream {
+    
 }

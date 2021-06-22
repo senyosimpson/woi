@@ -1,8 +1,12 @@
-[workspace]
+[package]
+name = "woi"
+version = "0.1.0"
+authors = ["SenYeezus <simpsonsenyo@gmail.com>"]
+edition = "2018"
 
-members = [
-    "epoll",
-    "future",
-    "net",
-    "io"
-]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libc = "0.2.97"
+bitflags = "1.2.1"
+futures-io = "0.3.15"

@@ -1,6 +1,7 @@
+// Mostly taken from Tokio
 use std::{future::Future, io, net::{SocketAddr, SocketAddrV4, SocketAddrV6}};
 
-use future::Ready;
+use crate::future::Ready;
 
 pub(crate) trait ToSocketAddrs {
     type Iter: Iterator<Item = SocketAddr>;

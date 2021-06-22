@@ -4,9 +4,7 @@ use std::{
     time::Duration,
 };
 
-mod epoll;
-use epoll::CtlOp;
-pub use epoll::{Event, Events, Interest, Token};
+use super::epoll::{self, CtlOp, Event, Events, Interest, Token};
 
 pub trait Source {
     fn raw_fd(&self) -> RawFd;
