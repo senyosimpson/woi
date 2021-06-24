@@ -1,2 +1,2 @@
 mod ready;
-pub use ready::Ready;
+pub(crate) use ready::{ok, Ready};
