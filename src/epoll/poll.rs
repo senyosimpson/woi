@@ -16,6 +16,9 @@ impl Source for RawFd {
     }
 }
 
+// This is essentially a way to implement a trait on another
+// trait through using trait bounds. We read the below as:
+// implement trait Source for all types T that implement AsRawFd.
 impl<T: AsRawFd> Source for &T {
     fn raw_fd(&self) -> RawFd {
         self.as_raw_fd()
@@ -35,22 +38,18 @@ impl Poll {
     }
 
     pub fn add(&self, source: impl Source, interest: Interest, token: Token) -> io::Result<()> {
-        let mut event = Event::new(interest, token);
-        epoll::ctl(self.fd, CtlOp::ADD, source.raw_fd(), &mut event)?;
+        let event = Event::new(interest, token);
+        epoll::ctl(self.fd, CtlOp::ADD, source.raw_fd(), Some(event))?;
         Ok(())
     }
 
     pub fn delete(&self, source: impl Source) -> io::Result<()> {
-        // Create an event to pass in but it is ignored
-        // NOTE: Because it is ignored, we can pass in a token that's
-        // already in use
-        let mut event = Event::empty();
-        epoll::ctl(self.fd, CtlOp::DEL, source.raw_fd(), &mut event)?;
+        epoll::ctl(self.fd, CtlOp::DEL, source.raw_fd(), None)?;
         Ok(())
     }
     pub fn modify(&self, source: impl Source, interest: Interest, token: Token) -> io::Result<()> {
-        let mut event = Event::new(interest, token);
-        epoll::ctl(self.fd, CtlOp::MOD, source.raw_fd(), &mut event)?;
+        let event = Event::new(interest, token);
+        epoll::ctl(self.fd, CtlOp::MOD, source.raw_fd(), Some(event))?;
         Ok(())
     }
 
@@ -61,16 +60,11 @@ impl Poll {
             None => -1,
         };
         let n_events = epoll::wait(self.fd, events, timeout)?;
-        // This is actually safe to call because epoll::wait returns the
-        // number of events that were returned
-        // Got this from Mio: https://github.com/tokio-rs/mio/blob/22e885859bb481ae4c2827ab48552c3159fcc7f8/src/sys/unix/selector/epoll.rs#L77
+
+        // This is actually safe to call because `epoll::wait` returns the
+        // number of events that were returned. Got this from Mio:
+        // https://github.com/tokio-rs/mio/blob/22e885859bb481ae4c2827ab48552c3159fcc7f8/src/sys/unix/selector/epoll.rs#L77
         unsafe { events.set_len(n_events as usize) };
         Ok(())
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     #[test]
-//     fn add_event() {}
-// }

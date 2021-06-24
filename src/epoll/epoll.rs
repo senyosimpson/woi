@@ -1,8 +1,15 @@
-use std::io;
+use std::{io, ptr};
 use std::os::unix::io::RawFd;
 
 use bitflags::bitflags;
 use libc;
+
+// The enum representation is changed to i32 so that it works with
+// libc epoll bindings. An alternative way to write this is as
+// #[repr(libc::c_int)] since libc::c_int = i32
+//
+// Learn more about type layout representations:
+// https://doc.rust-lang.org/reference/type-layout.html#representations
 
 /// Control options for `epoll_ctl`
 #[repr(i32)]
@@ -18,6 +25,14 @@ pub(crate) enum CtlOp {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Token(pub u64);
 
+// Uses #[repr(C)] to be interoperable with C. Learn more here:
+// https://doc.rust-lang.org/reference/type-layout.html#the-c-representation
+//
+// I have not spent enough time learning about packed data structures. From
+// what I've gathered, it's a way to efficiently use memory by removing
+// padding. Learn more here:
+// https://doc.rust-lang.org/reference/type-layout.html#the-alignment-modifiers
+// https://www.mikroe.com/blog/packed-structures-make-memory-feel-safe
 /// An equivalent of `libc::epoll_data`
 #[repr(C)]
 #[repr(packed)]
@@ -72,24 +87,39 @@ fn cvt(result: i32) -> io::Result<i32> {
     }
 }
 
-/// Safe wrapper around `libc::epoll_create`
-/// Manpages: https://man7.org/linux/man-pages/man2/epoll_create.2.html
+/// Safe wrapper around `libc::epoll_create1`
+/// Uses `epoll_create1` by default with the close-on-exec flag set
+/// Official documentation: https://man7.org/linux/man-pages/man2/epoll_create.2.html
 #[cfg(target_os = "linux")]
 pub(crate) fn create() -> io::Result<RawFd> {
     cvt(unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) })
 }
 
 /// Safe wrapper around `libc::epoll_ctl`
-/// Manpages: https://man7.org/linux/man-pages/man2/epoll_ctl.2.html
+/// Official documentation: https://man7.org/linux/man-pages/man2/epoll_ctl.2.html
 #[cfg(target_os = "linux")]
-pub(crate) fn ctl(epfd: RawFd, op: CtlOp, fd: RawFd, event: &mut Event) -> io::Result<()> {
-    let event_ptr: *mut Event = event;
-    cvt(unsafe { libc::epoll_ctl(epfd, op as i32, fd, event_ptr as *mut libc::epoll_event) })?;
+pub(crate) fn ctl(epfd: RawFd, op: CtlOp, fd: RawFd, mut event: Option<Event>) -> io::Result<()> {
+    // This uses a neat trick to work with epoll. We get a mutable pointer
+    // to the event struct. Since it is always valid to cast a pointer to
+    // any other type, we can convert it into a `libc::epoll_event` pointer.
+    // However, it is not safe to dereference. Imagine the structure event and
+    // libc::epoll_event were different - the data returned would be corrupted.
+    // Therefore, it is up to us to ensure that this is actually valid. We also
+    // have to wrap it in an unsafe block.
+    let event = if let Some(ev) = &mut event {
+        let ev_ptr: *mut Event = ev;
+        let ev_ptr = ev_ptr as *mut libc::epoll_event;
+        ev_ptr
+    } else {
+        ptr::null_mut()
+    };
+
+    cvt(unsafe { libc::epoll_ctl(epfd, op as i32, fd, event) })?;
     Ok(())
 }
 
 /// Safe wrapper around `libc::epoll_wait`
-/// Manpages: https://man7.org/linux/man-pages/man2/epoll_wait.2.html
+/// Official documentation: https://man7.org/linux/man-pages/man2/epoll_wait.2.html
 #[cfg(target_os = "linux")]
 pub(crate) fn wait(epfd: RawFd, events: &mut Events, timeout: i32) -> io::Result<i32> {
     let events_ptr = events.as_mut_ptr() as *mut libc::epoll_event;
@@ -97,7 +127,7 @@ pub(crate) fn wait(epfd: RawFd, events: &mut Events, timeout: i32) -> io::Result
 }
 
 /// Safe wrapper around `libc::close`
-/// Manpages: https://man7.org/linux/man-pages/man2/close.2.html
+/// Official documentation: https://man7.org/linux/man-pages/man2/close.2.html
 #[cfg(target_os = "linux")]
 pub(crate) fn close(fd: RawFd) -> io::Result<()> {
     cvt(unsafe { libc::close(fd) })?;
@@ -122,10 +152,10 @@ mod tests {
 
         let queue = create().unwrap();
         let interest = Interest::READABLE | Interest::WRITABLE;
-        let mut event = Event::new(interest, Token(1));
+        let event = Event::new(interest, Token(1));
 
         let socket = TcpStream::connect("localhost:3000").unwrap();
-        ctl(queue, CtlOp::ADD, socket.as_raw_fd(), &mut event).unwrap();
+        ctl(queue, CtlOp::ADD, socket.as_raw_fd(), Some(event)).unwrap();
         close(queue).unwrap();
     }
 
@@ -137,7 +167,7 @@ mod tests {
 
         let queue = create().unwrap();
         let interest = Interest::READABLE;
-        let mut event = Event::new(interest, Token(1));
+        let event = Event::new(interest, Token(1));
 
         // I need an actual way of testing this without spinning up an entire server.
         // I can potentially query an actual website.
@@ -145,7 +175,7 @@ mod tests {
         let request = "GET /delay HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n";
         socket.write_all(request.as_bytes()).unwrap();
 
-        ctl(queue, CtlOp::ADD, socket.as_raw_fd(), &mut event).unwrap();
+        ctl(queue, CtlOp::ADD, socket.as_raw_fd(), Some(event)).unwrap();
 
         let maxevents = 10;
         let mut events = Events::with_capacity(maxevents);
