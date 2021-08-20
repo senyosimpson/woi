@@ -6,4 +6,6 @@
 Woi is a single-threaded asynchronous runtime built for the purpose of learning more about them. Hopefully
 one day this will be full of beautiful documentation.
 
-Most of this code is inspired or copied from [Tokio] and [Smol]
+Most of this code is inspired or copied from [Tokio] and [Smol].
+
+Decided to keep a [diary](./diary.md) documenting the development.
