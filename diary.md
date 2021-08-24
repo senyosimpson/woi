@@ -17,7 +17,7 @@ struct Task {
 }
 ```
 
-The problem is the `future` field. The future's output is `()`. Instead what we want something generic
+The problem is the `future` field. The future's output is `()`. Instead what we want is something generic
 like
 
 ```rust
@@ -83,10 +83,37 @@ where
 we would have
 
 ```rust
-pub fn spawn<F, T>(&self, Future: F) -> Task<T> {}
+pub fn spawn<F, T>(&self, future: F) -> Task<T> {}
 // or
-pub fn spawn<F>(&self, Future: F) -> Task<F::Output> {}
+pub fn spawn<F>(&self, future: F) -> Task<F::Output> {}
 ```
 
 Here we're able to get a task that is awaitable and returns the output of the future. Again, how this
 actually works I'm not sure.
+
+### 23/08/2021
+
+Both async-std and Tokio return `JoinHandle`'s. These are handles to the underlying task and returned
+when a call to spawn happens. The idea is to have a `Runnable` and a `Task<T>`. Still not sure on all
+the details. The idea would be something like
+
+```rust
+struct Runtime {
+    scheduled_tasks: channel::Receiver<Runnable>,
+    ...
+}
+
+impl Runtime {
+    pub fn spawn<F>(&self, future: F) -> Task<F::Output> {
+        // Create a runnable and a task
+        let task = Task {
+
+        };
+        task
+    }
+}
+```
+
+There then has to be a link between a Runnable and a Task. I'm not sure how that would be facilitated
+just yet. It seems that they're just using pointers to the same location in memory to do this but
+I'm sure I can design something simple first.
