@@ -117,3 +117,37 @@ impl Runtime {
 There then has to be a link between a Runnable and a Task. I'm not sure how that would be facilitated
 just yet. It seems that they're just using pointers to the same location in memory to do this but
 I'm sure I can design something simple first.
+
+### 24/08/2021
+
+`async-task` has a nice idea for its `spawn` function where it takes in a scheduling function which
+then passes that onto the runnable for scheduling.
+
+Additionally, for the task and runnable, I can probably use a `Shared` construct. This is some data
+that is shared with the `Runnable` and the `Task`. If you look at `async-task` they have roughly
+
+```rust
+struct Runnable {
+    // Pointer to heap-allocated task
+    ptr: NonNull
+}
+
+struct Task {
+    // Raw task pointer
+    ptr: NonNull,
+    ...
+}
+```
+
+The `spawn` function does something like
+
+```rust
+let ptr = NonNull::new(...);
+
+let runnable = Runnable { ptr };
+let task = Task { ptr, ... };
+```
+
+So we can see in this instance the `ptr` is effectively how they both reference the same piece of data.
+If I can copy this without going the `ptr` route, that would be good. Just so I can get the roughest
+thing working.
