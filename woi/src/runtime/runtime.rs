@@ -1,17 +1,27 @@
 use std::{cell::RefCell, collections::VecDeque, future::Future, rc::Rc};
 // use slab::Slab;
-use crate::task::{self, Schedulable, Task};
+// use crate::task::{self, Task, JoinHandle};
+use crate::runtime::spawner::Spawner;
+use crate::task::task::Task;
 
 pub struct Runtime {
-    /// Queue that holds tasks that are ready to be executed
-    queue: Rc<RefCell<VecDeque<Schedulable>>>,
+    // Queue that holds tasks that are ready to be executed
+    queue: Rc<VecDeque<Task>>,
+    // Spawner responsible for spawning tasks onto the executor
+    spawner: Spawner
 }
 
 impl Runtime {
     pub fn new() -> Runtime {
+        let queue = Rc::new(VecDeque::new());
         Runtime {
-            queue: Rc::new(RefCell::new(VecDeque::new())),
+            queue,
+            spawner: Spawner { queue }
         }
+    }
+
+    pub fn spawner() -> Spawner {
+        spawner
     }
 
     pub fn run(&self) {
@@ -23,12 +33,12 @@ impl Runtime {
         }
     }
 
-    pub fn spawn<F>(&self, future: F) -> Task<F::Output>
-    where
-        F: Future + 'static,
-    {
-        // let queue = self.queue.clone();
-        // let schedule_fn = |schedulable| queue.push_back(schedulable);
-        task::spawn(future, self.queue.clone())
-    }
+    // pub fn spawn<F>(&self, future: F) -> Task<F::Output>
+    // where
+    //     F: Future + 'static,
+    // {
+    //     // let queue = self.queue.clone();
+    //     // let schedule_fn = |schedulable| queue.push_back(schedulable);
+    //     task::spawn(future, self.queue.clone())
+    // }
 }
