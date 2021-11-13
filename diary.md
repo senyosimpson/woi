@@ -151,3 +151,38 @@ let task = Task { ptr, ... };
 So we can see in this instance the `ptr` is effectively how they both reference the same piece of data.
 If I can copy this without going the `ptr` route, that would be good. Just so I can get the roughest
 thing working.
+
+### 30/08/2021
+
+I'm pretty confused as to how `task` and `runnable` are related to each other from a usage perspective.
+For exmple, in `async-task` they have an example
+
+```rust
+
+let (runnable, task) = async_task::spawn(fut, schedule);
+runnable.run()
+smol::future::block_on(task)
+```
+
+I don't understand how you can run the `runnable` but then block on the `task`. It seems like both those
+methods will poll the future, therefore effectively doing the same work. I need to look into this.
+
+An interesting observation is that another example is as follows
+
+```rust
+let (runnable, task) = async_task::spawn(fut, schedule)
+runnable.schedule() // instead of runnable.run()
+smol::future::block_on(task)
+```
+
+I'm not sure what the difference here actually means from an implementation perspective.
+
+***
+
+I don't think its possible to build this out without using pointers. I'm still trying to think of a
+design but I haven't been able to figure out a way to get out a generic `T`.
+The problem is that the `Schedulable` needs to have some way of referring to the future. The future
+operates over a generic `T` which then causes all the headaches we were trying to solve for as then
+the `Schedulable` would also have a generic `T`.
+
+Back to the drawing board!
