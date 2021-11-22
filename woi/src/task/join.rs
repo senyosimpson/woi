@@ -10,20 +10,8 @@ use crate::task::{header::Header, raw::RawTask};
 
 pub struct JoinHandle<T> {
     // Pointer to raw task
-    raw: NonNull<()>,
-    _marker: PhantomData<T>,
-}
-
-impl<T> JoinHandle<T> {
-    pub fn new<F: Future>(future: F) -> JoinHandle<T> {
-        let ptr = RawTask::<_, >::allocate(future);
-        JoinHandle {
-            raw: ptr,
-            _marker: PhantomData,
-        }
-    }
-
-    pub fn poll_inner() {}
+    pub(crate) raw: NonNull<()>,
+    pub(crate) _marker: PhantomData<T>,
 }
 
 impl<T> Future for JoinHandle<T> {
@@ -33,15 +21,19 @@ impl<T> Future for JoinHandle<T> {
         let raw = self.raw.as_ptr();
         let header = raw as *const Header;
 
-        // This is obviously not sane code. There needs to be checks to see if we
-        // can actually read the output
         unsafe {
-            let output = {
-                let out = ((*header).vtable.get_output)(self.raw.as_ptr());
-                (out as *mut T).read()
-            };
+            let state = (*header).state;
+            match state {
+                1 => {
+                    let output = {
+                        let out = ((*header).vtable.get_output)(self.raw.as_ptr());
+                        (out as *mut T).read()
+                    };
 
-            Poll::Ready(output)
+                    return Poll::Ready(output);
+                }
+                _ => return Poll::Pending,
+            }
         }
     }
 }

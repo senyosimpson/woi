@@ -3,9 +3,18 @@ use woi;
 // use woi::io::{AsyncReadExt, AsyncWriteExt};
 
 fn main() {
-    // woi::Runtime::block_on(async {
-    //     println!("Hello Senyo");
-    // });
+    let rt = woi::Runtime::new();
+    rt.block_on(async {
+        let handle = rt.spawn(async {
+            println!("Hello Senyo");
+            5
+        });
+
+        let value = handle.await;
+        println!("Value: {}", value);
+    });
+
+    // println!("Got {}", out);
 
     // woi::Runtime::block_on(async move {
     //     let listener = TcpListener::bind("127.0.0.1:8080").await?;

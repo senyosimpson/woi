@@ -11,10 +11,14 @@ use std::{
 use crate::task::header::Header;
 use crate::task::task::Task;
 
+pub(crate) trait Schedule {
+    fn schedule(&self, task: Task);
+}
+
 pub struct TaskVTable {
     pub(crate) poll: unsafe fn(*const ()),
     pub(crate) get_output: unsafe fn(*const ()) -> *const (),
-    pub(crate) schedule: unsafe fn(*const ())
+    pub(crate) schedule: unsafe fn(*const ()),
 }
 
 // The status of a future. This contains either the future
@@ -28,23 +32,23 @@ pub enum Status<F: Future> {
 // Memory layout of a task
 pub struct TaskLayout {
     layout: Layout,
+    offset_schedule: usize,
     offset_status: usize,
-    offset_schedule: usize
 }
 
 // Having the C representation means we are guaranteed
 // on the memory layout of the task
 #[repr(C)]
-pub struct RawTask<F: Future, S> {
+pub(crate) struct RawTask<F: Future, S> {
     pub(crate) header: *const Header,
+    pub(crate) scheduler: *const S,
     pub(crate) status: *mut Status<F>,
-    pub(crate) schedule: *const S
 }
 
 impl<F, S> RawTask<F, S>
 where
     F: Future,
-    S: Fn(Task)
+    S: Schedule,
 {
     // What implication is there for having a const within an impl? Is that the same
     // as having it outside?
@@ -55,7 +59,8 @@ where
         Self::drop_waker,
     );
 
-    pub fn allocate(future: F) -> NonNull<()> {
+
+    pub fn new(future: F, scheduler: S) -> NonNull<()> {
         let task_layout = Self::layout();
         unsafe {
             let ptr = match NonNull::new(alloc::alloc(task_layout.layout) as *mut ()) {
@@ -66,17 +71,19 @@ where
             let raw = Self::from_ptr(ptr.as_ptr());
 
             let header = Header {
-                state: AtomicUsize::new(0),
+                // state: AtomicUsize::new(0), // Todo: Understand the role of the state
+                state: 0,
                 vtable: &TaskVTable {
                     poll: Self::poll,
                     get_output: Self::get_output,
-                    schedule: Self::schedule
+                    schedule: Self::schedule,
                 },
             };
             (raw.header as *mut Header).write(header);
+            (raw.scheduler as *mut S).write(scheduler);
 
-            let stage = Status::Running(future);
-            raw.status.write(stage);
+            let status = Status::Running(future);
+            raw.status.write(status);
 
             ptr
         }
@@ -88,29 +95,32 @@ where
         unsafe {
             Self {
                 header: ptr as *const Header,
+                scheduler: ptr.add(task_layout.offset_schedule) as *const S,
                 status: ptr.add(task_layout.offset_status) as *mut Status<F>,
-                schedule: ptr.add(task_layout.offset_schedule) as *const S
             }
         }
     }
 
+    // Calculates the memory layout requirements and stores offsets into the
+    // task to find the respective fields. The space that needs to be allocated
+    // are for: the future, the scheduling function and the task header
     pub fn layout() -> TaskLayout {
         let header_layout = Layout::new::<Header>();
-        let stage_layout = Layout::new::<Status<F>>();
         let schedule_layout = Layout::new::<S>();
+        let stage_layout = Layout::new::<Status<F>>();
 
         let layout = header_layout;
-        let (layout, offset_status) = layout
-            .extend(stage_layout)
-            .expect("Could not allocate task!");
         let (layout, offset_schedule) = layout
             .extend(schedule_layout)
+            .expect("Could not allocate task!");
+        let (layout, offset_status) = layout
+            .extend(stage_layout)
             .expect("Could not allocate task!");
 
         TaskLayout {
             layout,
+            offset_schedule,
             offset_status,
-            offset_schedule
         }
     }
 
@@ -119,7 +129,6 @@ where
     // is necessary is yet to be seen
     unsafe fn clone_waker(ptr: *const ()) -> RawWaker {
         let raw = Self::from_ptr(ptr);
-
         RawWaker::new(ptr, &Self::RAW_WAKER_VTABLE)
     }
 
@@ -143,9 +152,11 @@ where
         let raw = Self::from_ptr(ptr);
 
         let task = Task {
-            ptr: NonNull::new_unchecked( ptr as *mut ())
+            raw: NonNull::new_unchecked(ptr as *mut ()),
         };
-        (*raw.schedule)(task)
+
+        let scheduler = &*raw.scheduler;
+        scheduler.schedule(task)
     }
 
     // Runs the future and updates its state
@@ -162,9 +173,14 @@ where
             _ => panic!("Wrong stage"),
         };
 
+        // Should we Box::pin here or is pinning on the stack fine?
         let future = Pin::new_unchecked(future);
         match future.poll(cx) {
-            Poll::Ready(v) => *raw.status = Status::Finished(v),
+            Poll::Ready(v) => {
+                let header = &mut *(raw.header as *mut Header);
+                header.state = 1;
+                *raw.status = Status::Finished(v)
+            },
             Poll::Pending => {
                 // Schedule again in future
             }
@@ -175,6 +191,7 @@ where
         let raw = Self::from_ptr(ptr);
 
         // If you can read the output, perform the condition
+        // This should check the status of the task
         match mem::replace(&mut *raw.status, Status::Consumed) {
             Status::Finished(output) => &output as *const _ as *const (),
             _ => panic!("Could not retrieve output!"),

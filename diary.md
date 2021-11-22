@@ -186,3 +186,22 @@ operates over a generic `T` which then causes all the headaches we were trying t
 the `Schedulable` would also have a generic `T`.
 
 Back to the drawing board!
+
+### 07/11/2021
+
+We're back after a long break! I've been reading source code like you can't believe. We've made progress,
+we're doing good.
+
+The original idea to use a shared construct between a `Schedulable` and a `Task` turned out to be infeasible.
+No matter how you spin it, you can't get rid of the type `T` from propagating all over your code. To
+get around this, you can make use of pointers that essentially allow for type erasure. I tried quite
+a few different designs but could never get them to work (lifetimes ending my last attempt!). The end
+design is very similar to the actual `async-task`. I think this is fine for now.
+
+Moving forward, I need to start understanding how to keep state of the task is necessary.
+
+### 22/11/2021
+
+A single-threaded executor requires two threads for the entire program. The single-threaded executor
+just means the executor itself is single-threaded but the application will have to use two threads
+in order to not block the main program.
