@@ -8,3 +8,5 @@ Waking up a thread (notify) on a blocked poll/epoll
 ## Wakers
 
 * https://boats.gitlab.io/blog/post/wakers-i/
+* https://github.com/aturon/rfcs/blob/e7eaea194994da28bde2c36d78fedf50e79b4bcf/text/2592-futures.md#waking-up
+* https://github.com/aturon/rfcs/blob/e7eaea194994da28bde2c36d78fedf50e79b4bcf/text/2592-futures.md#rationale-drawbacks-and-alternatives-to-the-wakeup-design-waker
