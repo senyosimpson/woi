@@ -4,12 +4,10 @@ use std::{
     mem,
     pin::Pin,
     ptr::NonNull,
-    sync::atomic::AtomicUsize,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use crate::task::header::Header;
-use crate::task::task::Task;
+use crate::task::{header::Header, state::State, task::Task};
 
 pub(crate) trait Schedule {
     fn schedule(&self, task: Task);
@@ -59,7 +57,6 @@ where
         Self::drop_waker,
     );
 
-
     pub fn new(future: F, scheduler: S) -> NonNull<()> {
         let task_layout = Self::layout();
         unsafe {
@@ -71,8 +68,7 @@ where
             let raw = Self::from_ptr(ptr.as_ptr());
 
             let header = Header {
-                // state: AtomicUsize::new(0), // Todo: Understand the role of the state
-                state: 0,
+                state: State::new(),
                 vtable: &TaskVTable {
                     poll: Self::poll,
                     get_output: Self::get_output,
@@ -124,28 +120,47 @@ where
         }
     }
 
+    pub unsafe fn dealloc(ptr: *const()) {
+        let layout = Self::layout();
+        // TODO: Investigate if I need to use .drop_in_place()
+        alloc::dealloc(ptr as *mut u8, layout.layout);
+    }
+
     // Makes a clone of the waker
-    // Increments the number of references to the waker. Why this
-    // is necessary is yet to be seen
+    // Increments the number of references to the waker
+    // I don't fully understand the internal reference counting yet
+    // and why it is necessary
     unsafe fn clone_waker(ptr: *const ()) -> RawWaker {
         let raw = Self::from_ptr(ptr);
+        let header = &mut *(raw.header as *mut Header); 
+        header.state.ref_incr();
         RawWaker::new(ptr, &Self::RAW_WAKER_VTABLE)
     }
 
     // This is responsible for decrementing a reference count and ensuring
     // the task is destroyed if the reference count is 0
-    unsafe fn drop_waker(ptr: *const ()) {}
+    unsafe fn drop_waker(ptr: *const ()) {
+        let raw = Self::from_ptr(ptr);
+        let header = &mut *(raw.header as *mut Header); 
+        header.state.ref_decr();
+        if header.state.ref_count == 0 {
+            Self::dealloc(ptr)
+        }
+    }
 
     // Wake the task
+    // One requirement here is that it must be safe
+    // to call `wake` even if the task has been driven to completion
     unsafe fn wake(ptr: *const ()) {
-        let raw = Self::from_ptr(ptr);
-
-        // This is where we would schedule the task onto the executor
+        Self::schedule(ptr);
+        // TODO: This looks like it'll cause UB.
+        // What happens if I call wake and there's only one ref?
+        // We actually need a way to hold a ref-count in this event
+        Self::drop_waker(ptr);
     }
-    unsafe fn wake_by_ref(ptr: *const ()) {
-        let raw = Self::from_ptr(ptr);
 
-        // This is where we would schedule the task onto the executor
+    unsafe fn wake_by_ref(ptr: *const ()) {
+        Self::schedule(ptr);
     }
 
     unsafe fn schedule(ptr: *const ()) {
@@ -162,12 +177,14 @@ where
     // Runs the future and updates its state
     unsafe fn poll(ptr: *const ()) {
         let raw = Self::from_ptr(ptr);
+        let header = &mut *(raw.header as *mut Header);
 
         let waker = Waker::from_raw(RawWaker::new(ptr, &Self::RAW_WAKER_VTABLE));
         let cx = &mut Context::from_waker(&waker);
 
         let status = &mut *raw.status;
 
+        // TODO: Improve error handling
         let future = match status {
             Status::Running(future) => future,
             _ => panic!("Wrong stage"),
@@ -176,22 +193,20 @@ where
         // Should we Box::pin here or is pinning on the stack fine?
         let future = Pin::new_unchecked(future);
         match future.poll(cx) {
-            Poll::Ready(v) => {
-                let header = &mut *(raw.header as *mut Header);
-                header.state = 1;
-                *raw.status = Status::Finished(v)
-            },
+            Poll::Ready(out) => {
+                header.state.transition_to_done();
+                *raw.status = Status::Finished(out)
+            }
             Poll::Pending => {
                 // Schedule again in future
+                // (header.vtable.schedule)(ptr);
             }
         }
     }
 
     unsafe fn get_output(ptr: *const ()) -> *const () {
         let raw = Self::from_ptr(ptr);
-
-        // If you can read the output, perform the condition
-        // This should check the status of the task
+        // TODO: Improve error handling
         match mem::replace(&mut *raw.status, Status::Consumed) {
             Status::Finished(output) => &output as *const _ as *const (),
             _ => panic!("Could not retrieve output!"),

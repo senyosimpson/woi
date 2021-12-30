@@ -18,13 +18,15 @@ impl<T> Future for JoinHandle<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        use crate::task::state::Status;
+
         let raw = self.raw.as_ptr();
         let header = raw as *const Header;
 
         unsafe {
-            let state = (*header).state;
-            match state {
-                1 => {
+            let status = &(*header).state.status;
+            match status {
+                Status::Done => {
                     let output = {
                         let out = ((*header).vtable.get_output)(self.raw.as_ptr());
                         (out as *mut T).read()
