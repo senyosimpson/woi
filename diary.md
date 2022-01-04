@@ -205,3 +205,122 @@ Moving forward, I need to start understanding how to keep state of the task is n
 A single-threaded executor requires two threads for the entire program. The single-threaded executor
 just means the executor itself is single-threaded but the application will have to use two threads
 in order to not block the main program.
+
+#### Update: 04/01/2022
+
+The idea of using two threads stated above came from some code I read elsewhere. In that specific instance,
+it made sense to use two threads because it's easy and simplified the code. However, it is isn't necessary
+to use two threads. Given that using threads requires synchronization primitives, it's best to leave
+it out if you don't need it. Hence, that is our plan.
+
+### 04/01/2022
+
+Another year, who would've guessed I'd still be working on this. Nonetheless, we've made a bunch of
+progress.
+
+#### 1000 foot view
+
+So as it stands, we can run basic futures. There are a number of areas that need to be worked on however
+but that will mostly be left to do after implementing networking I/O. Nonetheless, it is worth running
+through how the executor is put together (mainly because I still find it kinda confusing).
+
+We have a program
+
+```rust
+use woi;
+
+fn main() {
+    let rt = woi::Runtime::new();
+    rt.block_on(async {
+        let handle = rt.spawn(async {
+            println!("Hello Senyo");
+            5
+        });
+
+        let value = handle.await;
+        println!("Value: {}", value);
+    });
+```
+
+`block_on` takes in a future and blocks the thread on it, running it to completion. Similar to Tokio,
+this is the runtime's entry point. All this does is loop through all the tasks spawned onto the executor
+and polls them. When all the tasks are completed, the result is returned.
+
+```rust
+pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+    loop {
+        match future.as_mut().poll(cx) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => {
+                // Go through all elements in the queue
+                // When all have been processed, poll's the outer future again
+                if let Some(task) = self.queue.borrow_mut().pop_front() {
+                    task.poll();
+                }
+            }
+        }
+    }
+}
+```
+
+Pretty neat. Now for a bit of a deep dive. `block_on` takes a future and we continously poll it until
+it is ready. We refer to the future passed in as the *outermost future*. Why? Futures are often (but
+not always) comprised of other futures. Polling the outermost future polls the inner futures. If any
+of the inner futures are pending then we know the outermost future is pending.
+
+In our runtime, inner futures are spawned onto the executor to be processed. We call them tasks.
+This is done through a call to `rt.spawn()`. This pushes a task onto the runtime's queue. The user gets
+a `JoinHandle` which is a handle to the inner future.
+
+> A `task` *is* a future. It just holds some additional state used in the runtime.
+
+From our example program, the outermost future spawns one inner future onto the runtime. The `block_on`
+call will check if the outermost future is complete. On the initiai call to `poll` this will return
+`Poll::Pending`. Why? Well, we haven't run the inner future yet - we only begin to process them if the
+outermost future is in a pending state. Once all the inner futures are processed, we once again check
+if the outermost future is complete. To reiterate, the outermost future is complete when *all* of the
+inner futures are complete. If that is the case, we are done.
+
+So now we can run futures and have an idea of how the runtime works but we still don't have any insight
+into what is happening behind the scenes. Let's look at tasks. A `task` is a future with some additional
+state.
+
+```rust
+struct Task {
+    future: Future,
+    state: State
+}
+```
+
+When you call `rt.spawn()` you get a `JoinHandle` - a handle to that specific task on the executor.
+When a handle is polled through an `.await` call, it checks whether the task it references is complete.
+
+```rust
+// This is pseudocode for the sake of explanation. Look through task/join.rs for the
+// true implementation
+impl<T> Future for JoinHandle<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let status = self.task.status;
+        match status {
+            Status::Done => {
+                let output = self.task.get_output();
+                return Poll::Ready(output);
+            }
+            _ => return Poll::Pending,
+        }
+    }
+}
+```
+
+The underlying task is processed by the executor as shown earlier. So to walk through the entire process:
+
+1. The outermost future is polled
+2. This polls any inner futures
+3. That occurs when there is a call to `.await`
+4. That will call `poll()` on the `JoinHandle`
+5. If the underlying task is incomplete, it will return `Poll::Pending`
+6. The executor will then proceeed to process all the tasks
+7. Once that is complete, back to 1
+
