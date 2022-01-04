@@ -47,6 +47,9 @@ impl State {
     }
 
     pub fn ref_count(&self) -> usize {
+        // To calculate the ref count, we AND with the ref count mask
+        // and then shift the bits down so that they begin at the
+        // start bit of the reference count
         (self.state & REF_COUNT_MASK) >> REF_COUNT_SHIFT
     }
 
