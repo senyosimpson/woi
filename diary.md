@@ -324,3 +324,26 @@ The underlying task is processed by the executor as shown earlier. So to walk th
 6. The executor will then proceeed to process all the tasks
 7. Once that is complete, back to 1
 
+#### Wakers and reference counting
+
+In most executor implementations, wakers are reference counted data structures. From my understanding,
+this is the case so that the runtime can determine the logic behind the reference counting. For example,
+in Tokio, a task starts with a reference count of 3. There are [alternative designs](https://github.com/rust-lang/rfcs/blob/master/text/2592-futures.md#rationale-drawbacks-and-alternatives-to-the-wakeup-design-waker)
+to using reference counting but I think it's the best solution for multithreaded executors. Ours is a
+single-threaded executor but for the sake of learning, I am still using a reference counted waker design.
+
+### Task state - 04/01/2022
+
+In both `async-task` and `tokio`, task state is stored as an `AtomicUsize`. This allows access to be
+synchronized. Given this, they've encoded the state using bitmasks. In my design, I don't need this
+and could implement the same thing with an enum. I was planning on opting for this design but I have
+little experience with bitmasks (and will need it when working with epoll) so once again, I might as
+well learn.
+
+#### Update - 04/01/2022
+
+Turns out it's pretty straightforward. All we do is have certain bits represent a value. If we want
+to check if a bit is set, we AND the bit we care about with the state. This will evaluate to 0 for
+all bits *not* of interest. For the bit of interest, if it is set, we get back 1 and if not 0.
+If we want to check or set bits, we OR the respective bitmasks. Since all the irrelevant bits will
+be set to 0, it won't change what is currently set.
