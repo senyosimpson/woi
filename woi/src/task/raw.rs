@@ -99,7 +99,7 @@ where
 
     // Calculates the memory layout requirements and stores offsets into the
     // task to find the respective fields. The space that needs to be allocated
-    // are for: the future, the scheduling function and the task header
+    // is for: the future, the scheduling function and the task header
     pub fn layout() -> TaskLayout {
         let header_layout = Layout::new::<Header>();
         let schedule_layout = Layout::new::<S>();
@@ -128,8 +128,6 @@ where
 
     // Makes a clone of the waker
     // Increments the number of references to the waker
-    // I don't fully understand the internal reference counting yet
-    // and why it is necessary
     unsafe fn clone_waker(ptr: *const ()) -> RawWaker {
         let raw = Self::from_ptr(ptr);
         let header = &mut *(raw.header as *mut Header); 
@@ -143,19 +141,23 @@ where
         let raw = Self::from_ptr(ptr);
         let header = &mut *(raw.header as *mut Header); 
         header.state.ref_decr();
-        if header.state.ref_count == 0 {
+        if header.state.ref_count() == 0 {
             Self::dealloc(ptr)
         }
     }
 
-    // Wake the task
+    // Wakes the task
     // One requirement here is that it must be safe
     // to call `wake` even if the task has been driven to completion
     unsafe fn wake(ptr: *const ()) {
+        // Here the caller gives us a reference count. If there is no
+        // need to schedule the task then we consume the reference count
+
+        // TODO: We need to hold a reference count if we have to schedule
+        // the task otherwise we will cause UB. This is likely to require
+        // us to have to keep the state of the task and only decrement the
+        // waker if we do not need to schedule it to run again
         Self::schedule(ptr);
-        // TODO: This looks like it'll cause UB.
-        // What happens if I call wake and there's only one ref?
-        // We actually need a way to hold a ref-count in this event
         Self::drop_waker(ptr);
     }
 
@@ -194,7 +196,7 @@ where
         let future = Pin::new_unchecked(future);
         match future.poll(cx) {
             Poll::Ready(out) => {
-                header.state.transition_to_done();
+                header.state.transition_to_complete();
                 *raw.status = Status::Finished(out)
             }
             Poll::Pending => {
