@@ -1,7 +1,10 @@
-use std::task::Context;
 use std::{
-    cell::RefCell, collections::VecDeque, future::Future, marker::PhantomData, rc::Rc,
-    task::Poll,
+    cell::RefCell,
+    collections::VecDeque,
+    future::Future,
+    marker::PhantomData,
+    rc::Rc,
+    task::{Context, Poll},
 };
 
 use crate::task::raw::Schedule;
@@ -67,20 +70,18 @@ impl Runtime {
     pub fn block_on<F: Future>(&self, future: F) -> F::Output {
         use std::task::Waker;
 
-        // let future = Pin::new_unchecked(future);
+        crate::pin!(future);
 
-        let mut future = Box::pin(future);
         let waker = unsafe { Waker::from_raw(dummy_raw_waker()) };
         let cx = &mut Context::from_waker(&waker);
-        // // somehow get a waker and context
+        // Just let it busy loop for now
         loop {
             match future.as_mut().poll(cx) {
                 Poll::Ready(output) => return output,
-                // Just let it busy loop for now
                 Poll::Pending => {
                     // Go through all elements in the queue
                     // When all have been processed, poll's the outer future again
-                    if let Some(task) = self.queue.borrow_mut().pop_front() {
+                    while let Some(task) = self.queue.borrow_mut().pop_front() {
                         task.poll();
                     }
                 }

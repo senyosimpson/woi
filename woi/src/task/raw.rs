@@ -185,14 +185,16 @@ where
         let cx = &mut Context::from_waker(&waker);
 
         let status = &mut *raw.status;
-
         // TODO: Improve error handling
         let future = match status {
             Status::Running(future) => future,
             _ => panic!("Wrong stage"),
         };
 
-        // Should we Box::pin here or is pinning on the stack fine?
+        // Safety: The future is allocated on the heap and therefore we know
+        // it has a stable memory address
+        // NOTE: Not sure how to phrase this. We don't need to use crate::pin! here
+        // because we already have a mutable reference to the future
         let future = Pin::new_unchecked(future);
         match future.poll(cx) {
             Poll::Ready(out) => {
