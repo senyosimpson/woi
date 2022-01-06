@@ -69,6 +69,7 @@ where
 
             let header = Header {
                 state: State::new(),
+                waker: None,
                 vtable: &TaskVTable {
                     poll: Self::poll,
                     get_output: Self::get_output,
@@ -199,6 +200,10 @@ where
         match future.poll(cx) {
             Poll::Ready(out) => {
                 header.state.transition_to_complete();
+                if header.state.has_join_waker() {
+                    header.wake_join_handle();
+                }
+
                 *raw.status = Status::Finished(out)
             }
             Poll::Pending => {

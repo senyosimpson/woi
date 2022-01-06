@@ -7,9 +7,16 @@ const RUNNING: usize = 1 << 1;
 // The task is complete
 const COMPLETE: usize = 1 << 2;
 
+
+// The join handle for the task still exists
+const JOIN_HANDLE: usize = 1 << 3;
+
+// The waker belonging to the join handle is registered
+const JOIN_WAKER: usize = 1 << 4;
+
 // The idea of using a state mask and ref count mask and figuring
 // out how much to shift is from Tokio
-const STATE_MASK: usize = SCHEDULED | RUNNING | COMPLETE;
+const STATE_MASK: usize = SCHEDULED | RUNNING | COMPLETE | JOIN_HANDLE | JOIN_WAKER;
 
 // The bits belonging to the ref count. These are the upper bits.
 // It is calculated by inverting the bits belonging to the
@@ -27,7 +34,11 @@ const REF_COUNT_SHIFT: usize = REF_COUNT_MASK.count_zeros() as usize;
 
 const REF_ONE: usize = 1 << REF_COUNT_SHIFT;
 
-const INITIAL_STATE: usize = (REF_ONE * 2) | SCHEDULED;
+
+// The task has an initial reference count of two
+//   * The JoinHandle
+//   * The internal Task
+const INITIAL_STATE: usize = (REF_ONE * 2) | SCHEDULED | JOIN_HANDLE;
 
 pub(crate) struct State {
     pub(crate) state: usize,
@@ -51,6 +62,18 @@ impl State {
         // and then shift the bits down so that they begin at the
         // start bit of the reference count
         (self.state & REF_COUNT_MASK) >> REF_COUNT_SHIFT
+    }
+
+    pub fn set_join_handle(&mut self) {
+        self.state |= JOIN_HANDLE;
+    }
+
+    pub fn set_join_waker(&mut self) {
+        self.state |= JOIN_WAKER;
+    }
+
+    pub fn has_join_waker(&self) -> bool {
+        self.state & JOIN_WAKER == JOIN_WAKER
     }
 
     pub fn is_complete(&self) -> bool {
