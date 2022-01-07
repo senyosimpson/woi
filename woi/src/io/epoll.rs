@@ -1,3 +1,5 @@
+// A safe library for interacting with epoll
+
 use std::{
     io,
     os::unix::io::{AsRawFd, RawFd},
@@ -8,9 +10,8 @@ use std::{
 use bitflags::bitflags;
 use libc;
 
-// The enum representation is changed to i32 so that it works with
-// libc epoll bindings. An alternative way to write this is as
-// #[repr(libc::c_int)] since libc::c_int = i32
+// The enum representation is changed to libc::c_int so that it works with
+// libc epoll bindings.
 //
 // Learn more about type layout representations:
 // https://doc.rust-lang.org/reference/type-layout.html#representations
@@ -27,7 +28,9 @@ pub(crate) enum CtlOp {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Token(pub u64);
+pub struct Token(pub usize);
+
+pub type Events = Vec<Event>;
 
 // Uses #[repr(C)] to be interoperable with C. Learn more here:
 // https://doc.rust-lang.org/reference/type-layout.html#the-c-representation
@@ -35,11 +38,11 @@ pub struct Token(pub u64);
 // I have not spent enough time learning about packed data structures. From
 // what I've gathered, it's a way to efficiently use memory by removing
 // padding. Learn more here:
-// https://doc.rust-lang.org/reference/type-layout.html#the-alignment-modifiers
-// https://www.mikroe.com/blog/packed-structures-make-memory-feel-safe
+//  - https://doc.rust-lang.org/reference/type-layout.html#the-alignment-modifiers
+//  - https://www.mikroe.com/blog/packed-structures-make-memory-feel-safe
+//
 /// An equivalent of `libc::epoll_data`
-#[repr(C)]
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct Event {
     interest: u32,
@@ -50,35 +53,20 @@ impl Event {
     pub fn new(interest: Interest, token: Token) -> Event {
         Event {
             interest: interest.bits(),
-            data: token.0,
+            data: token.0 as u64,
         }
     }
 
-    pub fn empty() -> Event {
-        Event {
-            interest: 0,
-            data: 0,
-        }
-    }
     pub fn token(&self) -> Token {
-        Token(self.data)
+        Token(self.data as usize)
     }
 }
-
-pub type Events = Vec<Event>;
 
 // TODO: Write documentation
 bitflags! {
     pub struct Interest: u32 {
-        const READABLE       = (libc::EPOLLIN  | libc::EPOLLONESHOT) as u32;
-        const WRITABLE       = (libc::EPOLLOUT | libc::EPOLLONESHOT) as u32;
-        // const EPOLLRDHUP     = libc::EPOLLRDHUP as u32;
-        // const EPOLLPRI       = libc::EPOLLPRI as u32;
-        // const EPOLLERR       = libc::EPOLLERR as u32;
-        // const EPOLLHUP       = libc::EPOLLHUP as u32;
-        // const EPOLLET        = libc::EPOLLET as u32;
-        // const EPOLLWAKEUP    = libc::EPOLLWAKEUP as u32;
-        // const EPOLLEXCLUSIVE = libc::EPOLLEXCLUSIVE as u32;
+        const READABLE       = (libc::EPOLLET  | libc::EPOLLIN | libc::EPOLLRDHUP) as u32;
+        const WRITABLE       = (libc::EPOLLET  | libc::EPOLLOUT) as u32;
     }
 }
 
@@ -103,21 +91,10 @@ pub(crate) fn create() -> io::Result<RawFd> {
 /// Official documentation: https://man7.org/linux/man-pages/man2/epoll_ctl.2.html
 #[cfg(target_os = "linux")]
 pub(crate) fn ctl(epfd: RawFd, op: CtlOp, fd: RawFd, mut event: Option<Event>) -> io::Result<()> {
-    // This uses a neat trick to work with epoll. We get a mutable pointer
-    // to the event struct. Since it is always valid to cast a pointer to
-    // any other type, we can convert it into a `libc::epoll_event` pointer.
-    // However, it is not safe to dereference. Imagine the structure event and
-    // libc::epoll_event were different - the data returned would be corrupted.
-    // Therefore, it is up to us to ensure that this is actually valid. We also
-    // have to wrap it in an unsafe block.
-    let event = if let Some(ev) = &mut event {
-        let ev_ptr: *mut Event = ev;
-        let ev_ptr = ev_ptr as *mut libc::epoll_event;
-        ev_ptr
-    } else {
-        ptr::null_mut()
+    let event = match &mut event {
+        Some(event) => event as *mut Event as *mut libc::epoll_event,
+        None => ptr::null_mut(),
     };
-
     cvt(unsafe { libc::epoll_ctl(epfd, op as i32, fd, event) })?;
     Ok(())
 }
@@ -126,8 +103,9 @@ pub(crate) fn ctl(epfd: RawFd, op: CtlOp, fd: RawFd, mut event: Option<Event>) -
 /// Official documentation: https://man7.org/linux/man-pages/man2/epoll_wait.2.html
 #[cfg(target_os = "linux")]
 pub(crate) fn wait(epfd: RawFd, events: &mut Events, timeout: i32) -> io::Result<i32> {
-    let events_ptr = events.as_mut_ptr() as *mut libc::epoll_event;
-    cvt(unsafe { libc::epoll_wait(epfd, events_ptr, events.capacity() as i32, timeout) })
+    let capacity = events.capacity() as i32;
+    let events = events.as_mut_ptr() as *mut libc::epoll_event;
+    cvt(unsafe { libc::epoll_wait(epfd, events, capacity, timeout) })
 }
 
 /// Safe wrapper around `libc::close`
@@ -148,24 +126,20 @@ impl Source for RawFd {
     }
 }
 
-// This is essentially a way to implement a trait on another
-// trait through using trait bounds. We read the below as:
-// implement trait Source for all types T that implement AsRawFd.
 impl<T: AsRawFd> Source for &T {
     fn raw_fd(&self) -> RawFd {
         self.as_raw_fd()
     }
 }
 
-pub struct Poll {
+pub struct Epoll {
     fd: RawFd,
 }
 
-impl Poll {
-    pub fn new() -> io::Result<Poll> {
+impl Epoll {
+    pub fn new() -> io::Result<Epoll> {
         let fd = create()?;
-
-        let poll = Poll { fd };
+        let poll = Epoll { fd };
         Ok(poll)
     }
 
@@ -189,7 +163,7 @@ impl Poll {
         events.clear();
         let timeout = match timeout {
             Some(duration) => duration.as_millis() as i32,
-            None => -1,
+            None => -1, // TThis blocks indefinitely
         };
         let n_events = wait(self.fd, events, timeout)?;
 
@@ -199,57 +173,60 @@ impl Poll {
         unsafe { events.set_len(n_events as usize) };
         Ok(())
     }
+
+    pub fn close(&self) -> io::Result<()> {
+        close(self.fd)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn create_epoll_queue() {
+    fn create_epoll_instance() {
         // Test it works by creating an instance of epoll and then closing it
         // If this function does not work, it will panic
-        let queue = create().unwrap();
-        close(queue).unwrap();
+        let epoll = Epoll::new().unwrap();
+        // Drop the error so we have a gaurantee that if the test fails, it is from
+        // creating the epoll instance. This is arguably shady
+        let _ = epoll.close();
     }
 
     #[test]
     fn add_event() {
-        use std::net::TcpStream;
+        use std::net::TcpListener;
         use std::os::unix::io::AsRawFd;
 
-        let queue = create().unwrap();
+        let epoll = Epoll::new().unwrap();
         let interest = Interest::READABLE | Interest::WRITABLE;
-        let event = Event::new(interest, Token(1));
+        let listener = TcpListener::bind("localhost:3000").unwrap();
 
-        let socket = TcpStream::connect("localhost:3000").unwrap();
-        ctl(queue, CtlOp::ADD, socket.as_raw_fd(), Some(event)).unwrap();
-        close(queue).unwrap();
+        epoll.add(listener.as_raw_fd(), interest, Token(1)).unwrap();
+        let _ = epoll.close();
     }
 
     #[test]
-    fn wait_for_event() {
+    fn poll_event() {
         use std::io::Write;
-        use std::net::TcpStream;
+        use std::net::{TcpListener, TcpStream};
         use std::os::unix::io::AsRawFd;
 
-        let queue = create().unwrap();
+        let epoll = Epoll::new().unwrap();
         let interest = Interest::READABLE;
-        let event = Event::new(interest, Token(1));
 
-        // I need an actual way of testing this without spinning up an entire server.
-        // I can potentially query an actual website.
+        let listener = TcpListener::bind("localhost:3000").unwrap();
+        epoll.add(listener.as_raw_fd(), interest, Token(1)).unwrap();
+
         let mut socket = TcpStream::connect("localhost:3000").unwrap();
-        let request = "GET /delay HTTP/1.1\r\nHost: localhost:3000\r\nConnection: close\r\n\r\n";
+        let request = "Hello world!";
         socket.write_all(request.as_bytes()).unwrap();
-
-        ctl(queue, CtlOp::ADD, socket.as_raw_fd(), Some(event)).unwrap();
 
         let maxevents = 10;
         let mut events = Events::with_capacity(maxevents);
-        let num_events = wait(queue, &mut events, -1).unwrap();
-        println!("Received {} number of events!", num_events);
-        close(queue).unwrap();
+        epoll.poll(&mut events, None).unwrap();
+        epoll.close().unwrap();
 
-        assert_eq!(num_events, 1);
+        assert_eq!(events.len(), 1);
     }
 }
