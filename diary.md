@@ -2,7 +2,9 @@
 
 Writing on the development of this runtime
 
-## Tasks and the runtime - 20/08/2021
+## 20 August 2021
+
+> Topic: Async task design
 
 An issue I'm facing now is how to design the tasks and runtime. It requires an interesting design to
 work, although I haven't entirely figured out the details. A 🧠 dump  of thoughts so far.
@@ -91,7 +93,9 @@ pub fn spawn<F>(&self, future: F) -> Task<F::Output> {}
 Here we're able to get a task that is awaitable and returns the output of the future. Again, how this
 actually works I'm not sure.
 
-### 23/08/2021
+## 23 August 2021
+
+> Topic: Async task design
 
 Both async-std and Tokio return `JoinHandle`'s. These are handles to the underlying task and returned
 when a call to spawn happens. The idea is to have a `Runnable` and a `Task<T>`. Still not sure on all
@@ -118,7 +122,9 @@ There then has to be a link between a Runnable and a Task. I'm not sure how that
 just yet. It seems that they're just using pointers to the same location in memory to do this but
 I'm sure I can design something simple first.
 
-### 24/08/2021
+## 24 August 2021
+
+> Topic: Async task design
 
 `async-task` has a nice idea for its `spawn` function where it takes in a scheduling function which
 then passes that onto the runnable for scheduling.
@@ -152,7 +158,9 @@ So we can see in this instance the `ptr` is effectively how they both reference 
 If I can copy this without going the `ptr` route, that would be good. Just so I can get the roughest
 thing working.
 
-### 30/08/2021
+## 30 August 2021
+
+> Topic: Async task design
 
 I'm pretty confused as to how `task` and `runnable` are related to each other from a usage perspective.
 For exmple, in `async-task` they have an example
@@ -187,7 +195,9 @@ the `Schedulable` would also have a generic `T`.
 
 Back to the drawing board!
 
-### 07/11/2021
+## 7 November 2021
+
+> Topic: Async task design
 
 We're back after a long break! I've been reading source code like you can't believe. We've made progress,
 we're doing good.
@@ -200,25 +210,22 @@ design is very similar to the actual `async-task`. I think this is fine for now.
 
 Moving forward, I need to start understanding how to keep state of the task is necessary.
 
-### 22/11/2021
+## 22 November 2021
+
+> Topic: Runtime design
 
 A single-threaded executor requires two threads for the entire program. The single-threaded executor
 just means the executor itself is single-threaded but the application will have to use two threads
 in order to not block the main program.
 
-#### Update: 04/01/2022
+## 4 January 2022
 
-The idea of using two threads stated above came from some code I read elsewhere. In that specific instance,
-it made sense to use two threads because it's easy and simplified the code. However, it is isn't necessary
-to use two threads. Given that using threads requires synchronization primitives, it's best to leave
-it out if you don't need it. Hence, that is our plan.
-
-### 04/01/2022
+> Topic: Who knows
 
 Another year, who would've guessed I'd still be working on this. Nonetheless, we've made a bunch of
 progress.
 
-#### 1000 foot view
+> Topic: Progress update
 
 So as it stands, we can run basic futures. There are a number of areas that need to be worked on however
 but that will mostly be left to do after implementing networking I/O. Nonetheless, it is worth running
@@ -324,7 +331,14 @@ The underlying task is processed by the executor as shown earlier. So to walk th
 6. The executor will then proceeed to process all the tasks
 7. Once that is complete, back to 1
 
-#### Wakers and reference counting
+> Topic: Runtime design
+
+The idea of using two threads stated above came from some code I read elsewhere. In that specific instance,
+it made sense to use two threads because it's easy and simplified the code. However, it is isn't necessary
+to use two threads. Given that using threads requires synchronization primitives, it's best to leave
+it out if you don't need it. Hence, that is our plan.
+
+> Topic: Wakers and reference counting
 
 In most executor implementations, wakers are reference counted data structures. From my understanding,
 this is the case so that the runtime can determine the logic behind the reference counting. For example,
@@ -332,7 +346,7 @@ in Tokio, a task starts with a reference count of 3. There are [alternative desi
 to using reference counting but I think it's the best solution for multithreaded executors. Ours is a
 single-threaded executor but for the sake of learning, I am still using a reference counted waker design.
 
-### Task state - 04/01/2022
+> Topic: Task state
 
 In both `async-task` and `tokio`, task state is stored as an `AtomicUsize`. This allows access to be
 synchronized. Given this, they've encoded the state using bitmasks. In my design, I don't need this
@@ -340,10 +354,92 @@ and could implement the same thing with an enum. I was planning on opting for th
 little experience with bitmasks (and will need it when working with epoll) so once again, I might as
 well learn.
 
-#### Update - 04/01/2022
+> Topic: Task state update
 
 Turns out it's pretty straightforward. All we do is have certain bits represent a value. If we want
 to check if a bit is set, we AND the bit we care about with the state. This will evaluate to 0 for
 all bits *not* of interest. For the bit of interest, if it is set, we get back 1 and if not 0.
 If we want to check or set bits, we OR the respective bitmasks. Since all the irrelevant bits will
 be set to 0, it won't change what is currently set.
+
+## 7 January 2022
+
+> Topic: Pinning futures
+
+Futures can be pinned on the heap or the stack. Pinning them on the stack is considered unsafe it does
+not gaurantee that the future will be held at a stable memory location. In Tokio and async-std, they
+pin futures to the stack but I had no idea why. Researching, I came across a good explanation in this
+[Reddit thread](https://www.reddit.com/r/rust/comments/pd4ygo/when_to_pin_on_stack_when_to_pin_on_heap/haovu6q/).
+In summary, since the future lives on the heap, anything pinned on the stack actually gets pinned on
+the heap (since the future owns all the data). This gave me the clarity that I could indeed pin futures
+on the stack as we allocate memory for the future on the heap at creation.
+
+Note: I will admit, my mental model here is still not the strongest
+
+> Topic: Task wakers
+
+When writing the `block_on` function, I realised the waker used is different from that used in a task.
+This warped my mental quite significantly.
+
+1. Why are they different?
+2. How and where do we even use the waker from the `block_on` function?
+
+Let's start with question 2. My initial confusion came in with understand how the waker from the `block_on`
+call propagates through futures. Turns out, my hunch was correct (as explained in another
+[Reddit thread](https://www.reddit.com/r/rust/comments/icwhwb/does_async_await_create_its_own_wakers/)),
+and that the context object is propagated from the parent future through all it's child futures. This
+is done through the `poll` function as expected. This means that the waker we create in `block_on` will
+propagate through to the relevant future - the `JoinHandle`.
+
+The `JoinHandle` is responsible for polling whether the underlying task is complete.
+
+```rust
+// This is pseudocode for the sake of explanation. Look through task/join.rs for the
+// true implementation
+impl<T> Future for JoinHandle<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let status = self.task.status;
+        match status {
+            Status::Done => {
+                let output = self.task.get_output();
+                return Poll::Ready(output);
+            }
+            _ => return Poll::Pending,
+        }
+    }
+}
+```
+
+The `JoinHandle` future needs to be woken up when the underlying task is complete, meaning that the underlying
+task needs to be able to wake it up. How is that achieved? By storing the `JoinHandle` waker in the task
+and invoking `wake/wake_by_ref` when it is complete. Our new implementation of the Future trait
+
+```rust
+// This is pseudocode for the sake of explanation. Look through task/join.rs for the
+// true implementation
+impl<T> Future for JoinHandle<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let status = self.task.status;
+        match status {
+            Status::Done => {
+                let output = self.task.get_output();
+                return Poll::Ready(output);
+            }
+            _ => {
+                // NOTE: Here we store the waker in the task
+                self.task.register_waker(cx.waker())
+                return Poll::Pending
+            }
+        }
+    }
+}
+```
+
+Next question is why are they different? Here I'm still improving my mental mode. The gist of it is
+that the runtime's threads get put to sleep if there is no work to do. However, they need to be woken
+up in the event new work is queued. The waker in the `block_on` `wake` function performs this wake up
+when invoked. The woken up thread will then fetch the output of the task.
