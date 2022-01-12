@@ -74,7 +74,7 @@ impl Event {
     // EPOLLHUP means both halves of the connection have shutdown. When reading
     // from a socket, it indicates that the *peer* has closed it's writing half
     // of the socket (versus meaning we have closed our read half). There may still
-    // be data to read in this case. We continue reading until we get a zero byte read
+    // be data to read in this case. We continue reading until we get a zero byte read 
     //
     // EPOLLRDHUP means the that peer closed the connection (or its write half of the connection).
     // That means we've received all the data we need to and we should check if there is any
@@ -171,16 +171,31 @@ impl<T: AsRawFd> Source for &T {
     }
 }
 
-#[derive(Clone)]
+pub struct Registry {
+    fd: RawFd
+}
+
 pub struct Epoll {
-    fd: RawFd,
+    registry: Registry
 }
 
 impl Epoll {
     pub fn new() -> io::Result<Epoll> {
+        let registry = Registry::new()?;
+        let epoll = Epoll { registry };
+        Ok(epoll)
+    }
+
+    pub fn registry(&self) -> &Registry {
+        &self.registry
+    }
+}
+
+impl Registry {
+    pub fn new() -> io::Result<Registry> {
         let fd = create()?;
-        let poll = Epoll { fd };
-        Ok(poll)
+        let registry = Registry { fd };
+        Ok(registry)
     }
 
     pub fn add(&self, source: impl Source, interest: Interest, token: Token) -> io::Result<()> {
@@ -221,7 +236,7 @@ impl Epoll {
 
 impl Drop for Epoll {
     fn drop(&mut self) {
-        let _ = self.close();
+        let _ = self.registry().close();
     }
 }
 

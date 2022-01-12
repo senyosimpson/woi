@@ -1,4 +1,3 @@
-pub mod epoll;
 pub mod future;
 pub mod io;
 pub mod macros;
