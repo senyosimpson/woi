@@ -1,7 +1,6 @@
 use std::{cell::RefCell, io, os::unix::prelude::RawFd, rc::Rc, task::Waker, time::Duration};
 
 use slab::Slab;
-use once_cell::unsync::Lazy;
 
 use super::epoll::{Epoll, Event, Events, Interest, Token};
 
@@ -63,15 +62,16 @@ impl IoSource {
     }
 }
 
-// Handle to a reactor
+// Handle to the reactor
+#[derive(Clone)]
 pub(crate) struct Handle {
     pub poll: Epoll,
     pub sources: Rc<RefCell<Slab<IoSource>>>,
 }
 
 impl Handle {
-    pub fn current() {
-        
+    pub fn current() -> Self {
+        crate::runtime::handle::io()
     }
 }
 
@@ -97,33 +97,6 @@ impl Reactor {
         }
     }
 
-    pub fn register(&mut self, io: RawFd, interest: Interest) -> io::Result<IoSource> {
-        let mut sources = self.sources.borrow_mut();
-        let entry = sources.vacant_entry();
-        let tick = 0;
-
-        let token = Token(entry.key());
-        let waiters = Default::default();
-        let io_source = IoSource {
-            io,
-            token,
-            tick,
-            waiters,
-        };
-
-        // How does the interest get here? I think that'll be defined by the Future
-        // implementation of the sockets
-        self.poll.add(io, interest, token.clone())?;
-        entry.insert(io_source.clone());
-
-        Ok(io_source)
-    }
-
-    pub fn deregister(&mut self, source: IoSource) -> io::Result<()> {
-        self.sources.borrow_mut().remove(source.token.0);
-        self.poll.delete(source.io)
-    }
-
     // Process new events
     pub fn react(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         // TODO: Figure out what the use case for the driver tick is here
@@ -139,5 +112,34 @@ impl Reactor {
         }
 
         Ok(())
+    }
+}
+
+// NOTE: Attaching these methods to the handle as a hack. There should be some shared
+// construct between the handle and the reactor for registering sources
+impl Handle {
+    pub fn register(&mut self, io: RawFd, interest: Interest) -> io::Result<IoSource> {
+        let mut sources = self.sources.borrow_mut();
+        let entry = sources.vacant_entry();
+        let tick = 0;
+
+        let token = Token(entry.key());
+        let waiters = Default::default();
+        let io_source = IoSource {
+            io,
+            token,
+            tick,
+            waiters,
+        };
+
+        self.poll.add(io, interest, token.clone())?;
+        entry.insert(io_source.clone());
+
+        Ok(io_source)
+    }
+
+    pub fn deregister(&mut self, source: IoSource) -> io::Result<()> {
+        self.sources.borrow_mut().remove(source.token.0);
+        self.poll.delete(source.io)
     }
 }

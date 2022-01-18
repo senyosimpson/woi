@@ -1,5 +1,5 @@
 mod epoll;
-mod reactor;
+pub(crate) mod reactor;
 pub(crate) mod pollable;
 
 // Re-export
