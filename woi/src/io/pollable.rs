@@ -5,7 +5,8 @@ use std::task::{Context, Poll};
 use futures::ready;
 
 use super::epoll::Interest;
-use super::reactor::{Handle, IoSource, Direction};
+use super::reactor::Handle;
+use super::io_source::{IoSource, Direction};
 
 // Async I/O adapter that bridges the event queue and I/O of interest
 pub(crate) struct Pollable<T> {
