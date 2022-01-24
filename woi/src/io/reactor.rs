@@ -11,7 +11,8 @@ use super::io_source::IoSource;
 
 pub(crate) struct Inner {
     pub poll: RefCell<Epoll>,
-    pub sources: RefCell<Slab<IoSource>>,
+    // TODO: This sucks lmao
+    pub sources: RefCell<Slab<Rc<RefCell<IoSource>>>>,
 }
 
 #[derive(Clone)]
@@ -61,8 +62,8 @@ impl Reactor {
             let token = event.token();
             if let Some(io_source) = self.inner.sources.borrow_mut().get_mut(token.0) {
                 // TODO: Ensure the resource is not stale
-                io_source.set_readiness(event);
-                io_source.wake(event)
+                io_source.borrow_mut().set_readiness(event);
+                io_source.borrow_mut().wake(event)
             }
         }
 
@@ -73,23 +74,24 @@ impl Reactor {
 // NOTE: Attaching these methods to the handle as a hack. There should be some shared
 // construct between the handle and the reactor for registering sources
 impl Handle {
-    pub fn register(&mut self, io: RawFd, interest: Interest) -> io::Result<IoSource> {
+    pub fn register(&mut self, io: RawFd, interest: Interest) -> io::Result<Rc<RefCell<IoSource>>> {
         let mut sources = self.inner.sources.borrow_mut();
         let entry = sources.vacant_entry();
         let tick = 0;
 
         let token = Token(entry.key());
-        let io_source = IoSource {
+        let io_source = Rc::new(RefCell::new(IoSource {
             io,
             token,
             tick,
             ..Default::default()
-        };
+        }));
 
         self.inner
             .poll
             .borrow_mut()
             .add(io, interest, token.clone())?;
+
         entry.insert(io_source.clone());
 
         Ok(io_source)

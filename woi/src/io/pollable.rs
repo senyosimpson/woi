@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::io::{self, Read};
 use std::os::unix::prelude::AsRawFd;
+use std::rc::Rc;
 use std::task::{Context, Poll};
 
 use futures::ready;
@@ -11,7 +13,7 @@ use super::io_source::{IoSource, Direction};
 // Async I/O adapter that bridges the event queue and I/O of interest
 pub(crate) struct Pollable<T> {
     io: T,
-    source: IoSource,
+    source: Rc<RefCell<IoSource>>,
     handle: Handle,
 }
 
@@ -42,7 +44,7 @@ impl<T: AsRawFd> Pollable<T> {
 
 impl<T: Read> Pollable<T> {
     pub fn poll_readable(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.source.poll_readable(cx)
+        self.source.borrow_mut().poll_readable(cx)
     }
 
     pub fn poll_read(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
@@ -53,7 +55,7 @@ impl<T: Read> Pollable<T> {
                 Ok(n) => return Poll::Ready(Ok(n)),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     // Clear readiness for the specific direction
-                    self.source.clear_readiness(Direction::Read)
+                    self.source.borrow_mut().clear_readiness(Direction::Read)
                 }
                 Err(e) => return Poll::Ready(Err(e)),
             }
@@ -61,6 +63,13 @@ impl<T: Read> Pollable<T> {
     }
 
     pub fn poll_writable(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.source.poll_writable(cx)
+        self.source.borrow_mut().poll_writable(cx)
+    }
+}
+
+impl<T> Drop for Pollable<T> {
+    fn drop(&mut self) {
+        // Need to deregister sources when they are dropped
+        // self.handle.deregister(self.source);
     }
 }
