@@ -1,47 +1,46 @@
-// A safe library for interacting with epoll
+//! A safe library for interacting with epoll, specifically for this project.
+//!
+//! [`Epoll`] provides all the necessary functions to interact with epoll.
+//!
+//! This crate *does not* expose all the interest bitflags available for epoll
+//! since they were not necessary for this project.
 
-use std::{
-    io,
-    os::unix::io::{AsRawFd, RawFd},
-    ptr,
-    time::Duration,
-};
+use std::io;
+use std::os::unix::io::{AsRawFd, RawFd};
+use std::time::Duration;
 
 use bitflags::bitflags;
 use libc;
 
-// The enum representation is changed to libc::c_int so that it works with
-// libc epoll bindings.
-//
-// Learn more about type layout representations:
-// https://doc.rust-lang.org/reference/type-layout.html#representations
-
-/// Control options for `epoll_ctl`
-#[repr(i32)]
-pub(crate) enum CtlOp {
-    /// Adds an entry to the interest list
-    ADD = libc::EPOLL_CTL_ADD,
-    /// Change the settings of an associated entry in the interest list
-    MOD = libc::EPOLL_CTL_MOD,
-    /// Removes an entry from the interest list
-    DEL = libc::EPOLL_CTL_DEL,
+/// Provides functionality for interacting epoll.
+///
+/// # Usage
+///
+/// ```no_run
+/// use std::io;
+/// use woi::io::epoll::{Epoll, Events};
+///
+/// fn main() -> io::Result<()> {
+///     let mut poll = Epoll::new()?;
+///     let mut events = Events::new();
+///     
+///     let listener = TcpListener::bind("localhost:8080");
+/// 
+///     
+/// }
+/// ```
+pub struct Epoll {
+    pub fd: RawFd,
 }
 
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-pub struct Token(pub usize);
-
-pub type Events = Vec<Event>;
-
-// Uses #[repr(C)] to be interoperable with C. Learn more here:
-// https://doc.rust-lang.org/reference/type-layout.html#the-c-representation
-//
-// I have not spent enough time learning about packed data structures. From
-// what I've gathered, it's a way to efficiently use memory by removing
-// padding. Learn more here:
-//  - https://doc.rust-lang.org/reference/type-layout.html#the-alignment-modifiers
-//  - https://www.mikroe.com/blog/packed-structures-make-memory-feel-safe
-//
 /// An equivalent of `libc::epoll_data`
+/// 
+/// Uses #[repr(C)] for interoperability with C.
+/// Learn more [here](https://doc.rust-lang.org/reference/type-layout.html#the-c-representation)
+/// 
+/// Epoll events are packed, hence we must specify the packed configuration
+/// as well. For more, read [here](https://doc.rust-lang.org/reference/type-layout.html#the-alignment-modifiers)
+/// and [here](https://www.mikroe.com/blog/packed-structures-make-memory-feel-safe)
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct Event {
@@ -49,11 +48,116 @@ pub struct Event {
     data: u64,
 }
 
+/// A collection of [`Event`]s. This is passed into [`Epoll::poll`] which will
+/// fill the buffer with ready events.
+pub type Events = Vec<Event>;
+
+bitflags! {
+    pub struct Interest: u32 {
+        const READABLE       = (libc::EPOLLET  | libc::EPOLLIN | libc::EPOLLRDHUP) as u32;
+        const WRITABLE       = (libc::EPOLLET  | libc::EPOLLOUT) as u32;
+    }
+}
+
+/// Control options for `epoll_ctl`
+/// 
+/// The enum representation is changed to i32 in order to work with
+/// libc epoll bindings.
+///
+/// Learn more about type layout representations
+/// [here](https://doc.rust-lang.org/reference/type-layout.html#representations)
+#[repr(i32)]
+pub(crate) enum CtlOp {
+    /// Add an entry to the interest list
+    ADD = libc::EPOLL_CTL_ADD,
+    /// Modify the interest of an associated entry in the interest list
+    MOD = libc::EPOLL_CTL_MOD,
+    /// Remove an entry from the interest list
+    DEL = libc::EPOLL_CTL_DEL,
+}
+
+/// Associates an entry in the interest list to an [`Event`]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct Token(pub usize);
+
 impl From<usize> for Token {
     fn from(value: usize) -> Token {
         Token(value)
     }
 }
+
+pub trait Source {
+    fn raw_fd(&self) -> RawFd;
+}
+
+// ===== impl Source =====
+
+impl Source for RawFd {
+    fn raw_fd(&self) -> RawFd {
+        *self
+    }
+}
+
+impl<T: AsRawFd> Source for &T {
+    fn raw_fd(&self) -> RawFd {
+        self.as_raw_fd()
+    }
+}
+
+// ==== impl Epoll =====
+
+impl Epoll {
+    pub fn new() -> io::Result<Epoll> {
+        let fd = epoll::create()?;
+        let poll = Epoll { fd };
+        Ok(poll)
+    }
+
+    pub fn add(&self, source: impl Source, interest: Interest, token: Token) -> io::Result<()> {
+        let event = Event::new(interest, token);
+        epoll::ctl(self.fd, CtlOp::ADD, source.raw_fd(), Some(event))?;
+        Ok(())
+    }
+
+    pub fn delete(&self, source: impl Source) -> io::Result<()> {
+        epoll::ctl(self.fd, CtlOp::DEL, source.raw_fd(), None)?;
+        Ok(())
+    }
+    pub fn modify(&self, source: impl Source, interest: Interest, token: Token) -> io::Result<()> {
+        let event = Event::new(interest, token);
+        epoll::ctl(self.fd, CtlOp::MOD, source.raw_fd(), Some(event))?;
+        Ok(())
+    }
+
+    pub fn poll(&self, events: &mut Events, timeout: Option<Duration>) -> io::Result<()> {
+        events.clear();
+
+        let timeout = match timeout {
+            Some(duration) => duration.as_millis() as i32,
+            None => -1, // TThis blocks indefinitely
+        };
+        let n_events = epoll::wait(self.fd, events, timeout)?;
+
+        // This is actually safe to call because `epoll::wait` returns the
+        // number of events that were returned. Got this from Mio:
+        // https://github.com/tokio-rs/mio/blob/22e885859bb481ae4c2827ab48552c3159fcc7f8/src/sys/unix/selector/epoll.rs#L77
+        unsafe { events.set_len(n_events as usize) };
+        Ok(())
+    }
+
+    pub fn close(&self) -> io::Result<()> {
+        epoll::close(self.fd)
+    }
+}
+
+impl Drop for Epoll {
+    fn drop(&mut self) {
+        tracing::debug!("Drop: epoll_fd={}", self.fd);
+        let _ = self.close();
+    }
+}
+
+// ===== impl Event =====
 
 impl Event {
     pub fn new(interest: Interest, token: Token) -> Event {
@@ -91,7 +195,7 @@ impl Event {
         epollin || epollpri || epollhup || epollrdhup
     }
 
-    pub fn is_writeable(&self) -> bool {
+    pub fn is_writable(&self) -> bool {
         let interest = self.interest as libc::c_int;
 
         let epollout = interest & libc::EPOLLOUT == libc::EPOLLOUT;
@@ -101,127 +205,59 @@ impl Event {
     }
 }
 
-// TODO: Write documentation
-bitflags! {
-    pub struct Interest: u32 {
-        const READABLE       = (libc::EPOLLET  | libc::EPOLLIN | libc::EPOLLRDHUP) as u32;
-        const WRITABLE       = (libc::EPOLLET  | libc::EPOLLOUT) as u32;
-    }
-}
+// ===== Standalone functions wrapping libc::epoll_* calls =====
 
-/// Converts C error codes into a Rust Result type
-fn cvt(result: i32) -> io::Result<i32> {
-    if result < 0 {
-        return Err(io::Error::last_os_error());
-    } else {
-        return Ok(result);
-    }
-}
+// For documentation of the various calls, refer to the
+// [epoll man pages](https://man7.org/linux/man-pages/man7/epoll.7.html)
+mod epoll {
+    use super::{CtlOp, Event, Events};
+    use std::io;
+    use std::os::unix::prelude::RawFd;
+    use std::ptr;
 
-/// Safe wrapper around `libc::epoll_create1`
-/// Uses `epoll_create1` by default with the close-on-exec flag set
-/// Official documentation: https://man7.org/linux/man-pages/man2/epoll_create.2.html
-#[cfg(target_os = "linux")]
-pub(crate) fn create() -> io::Result<RawFd> {
-    cvt(unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) })
-}
-
-/// Safe wrapper around `libc::epoll_ctl`
-/// Official documentation: https://man7.org/linux/man-pages/man2/epoll_ctl.2.html
-#[cfg(target_os = "linux")]
-pub(crate) fn ctl(epfd: RawFd, op: CtlOp, fd: RawFd, mut event: Option<Event>) -> io::Result<()> {
-    let event = match &mut event {
-        Some(event) => event as *mut Event as *mut libc::epoll_event,
-        None => ptr::null_mut(),
-    };
-    cvt(unsafe { libc::epoll_ctl(epfd, op as i32, fd, event) })?;
-    Ok(())
-}
-
-/// Safe wrapper around `libc::epoll_wait`
-/// Official documentation: https://man7.org/linux/man-pages/man2/epoll_wait.2.html
-#[cfg(target_os = "linux")]
-pub(crate) fn wait(epfd: RawFd, events: &mut Events, timeout: i32) -> io::Result<i32> {
-    let capacity = events.capacity() as i32;
-    let events = events.as_mut_ptr() as *mut libc::epoll_event;
-    cvt(unsafe { libc::epoll_wait(epfd, events, capacity, timeout) })
-}
-
-/// Safe wrapper around `libc::close`
-/// Official documentation: https://man7.org/linux/man-pages/man2/close.2.html
-#[cfg(target_os = "linux")]
-pub(crate) fn close(fd: RawFd) -> io::Result<()> {
-    cvt(unsafe { libc::close(fd) })?;
-    Ok(())
-}
-
-pub trait Source {
-    fn raw_fd(&self) -> RawFd;
-}
-
-impl Source for RawFd {
-    fn raw_fd(&self) -> RawFd {
-        *self
-    }
-}
-
-impl<T: AsRawFd> Source for &T {
-    fn raw_fd(&self) -> RawFd {
-        self.as_raw_fd()
-    }
-}
-
-#[derive(Clone)]
-pub struct Epoll {
-    fd: RawFd,
-}
-
-impl Epoll {
-    pub fn new() -> io::Result<Epoll> {
-        let fd = create()?;
-        let poll = Epoll { fd };
-        Ok(poll)
+    // Safe wrapper around `libc::epoll_create1`
+    // Sets the close-on-exec flag
+    #[cfg(target_os = "linux")]
+    pub(super) fn create() -> io::Result<RawFd> {
+        cvt(unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) })
     }
 
-    pub fn add(&self, source: impl Source, interest: Interest, token: Token) -> io::Result<()> {
-        let event = Event::new(interest, token);
-        ctl(self.fd, CtlOp::ADD, source.raw_fd(), Some(event))?;
-        Ok(())
-    }
-
-    pub fn delete(&self, source: impl Source) -> io::Result<()> {
-        ctl(self.fd, CtlOp::DEL, source.raw_fd(), None)?;
-        Ok(())
-    }
-    pub fn modify(&self, source: impl Source, interest: Interest, token: Token) -> io::Result<()> {
-        let event = Event::new(interest, token);
-        ctl(self.fd, CtlOp::MOD, source.raw_fd(), Some(event))?;
-        Ok(())
-    }
-
-    pub fn poll(&self, events: &mut Events, timeout: Option<Duration>) -> io::Result<()> {
-        events.clear();
-        let timeout = match timeout {
-            Some(duration) => duration.as_millis() as i32,
-            None => -1, // TThis blocks indefinitely
+    // Safe wrapper around `libc::epoll_ctl`
+    // Event is None only in the case where we want to perform a delete
+    // operation. epoll_ctl still expects a pointer so we pass in a null
+    // pointer
+    #[cfg(target_os = "linux")]
+    pub(super) fn ctl(epfd: RawFd, op: CtlOp, fd: RawFd, mut event: Option<Event>) -> io::Result<()> {
+        let event = match &mut event {
+            Some(event) => event as *mut Event as *mut libc::epoll_event,
+            None => ptr::null_mut(),
         };
-        let n_events = wait(self.fd, events, timeout)?;
-
-        // This is actually safe to call because `epoll::wait` returns the
-        // number of events that were returned. Got this from Mio:
-        // https://github.com/tokio-rs/mio/blob/22e885859bb481ae4c2827ab48552c3159fcc7f8/src/sys/unix/selector/epoll.rs#L77
-        unsafe { events.set_len(n_events as usize) };
+        cvt(unsafe { libc::epoll_ctl(epfd, op as i32, fd, event) })?;
         Ok(())
     }
 
-    pub fn close(&self) -> io::Result<()> {
-        close(self.fd)
+    // Safe wrapper around `libc::epoll_wait`
+    #[cfg(target_os = "linux")]
+    pub(super) fn wait(epfd: RawFd, events: &mut Events, timeout: i32) -> io::Result<i32> {
+        let capacity = events.capacity() as i32;
+        let events = events.as_mut_ptr() as *mut libc::epoll_event;
+        cvt(unsafe { libc::epoll_wait(epfd, events, capacity, timeout) })
     }
-}
 
-impl Drop for Epoll {
-    fn drop(&mut self) {
-        let _ = self.close();
+    // Safe wrapper around `libc::close`
+    #[cfg(target_os = "linux")]
+    pub(super) fn close(fd: RawFd) -> io::Result<()> {
+        cvt(unsafe { libc::close(fd) })?;
+        Ok(())
+    }
+
+    // Converts C error codes into a Rust Result type
+    fn cvt(result: i32) -> io::Result<i32> {
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        } else {
+            return Ok(result);
+        }
     }
 }
 
