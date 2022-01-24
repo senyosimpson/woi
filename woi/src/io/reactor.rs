@@ -1,22 +1,22 @@
-use std::{
-    cell::RefCell,
-    io,
-    os::unix::prelude::RawFd,
-    rc::Rc,
-    time::Duration,
-};
+use std::cell::RefCell;
+use std::io;
+use std::os::unix::prelude::RawFd;
+use std::rc::Rc;
+use std::time::Duration;
 
 use slab::Slab;
 
 use super::epoll::{Epoll, Events, Interest, Token};
 use super::io_source::IoSource;
 
+pub(crate) struct Inner {
+    pub poll: RefCell<Epoll>,
+    pub sources: RefCell<Slab<IoSource>>,
+}
 
-// Handle to the reactor
 #[derive(Clone)]
 pub(crate) struct Handle {
-    pub poll: Epoll,
-    pub sources: Rc<RefCell<Slab<IoSource>>>,
+    pub inner: Rc<Inner>,
 }
 
 impl Handle {
@@ -26,24 +26,24 @@ impl Handle {
 }
 
 pub(crate) struct Reactor {
-    poll: Epoll,
     events: Events,
-    sources: Rc<RefCell<Slab<IoSource>>>,
+    inner: Rc<Inner>,
 }
 
 impl Reactor {
     pub fn new() -> io::Result<Reactor> {
         Ok(Reactor {
-            poll: Epoll::new()?,
             events: Events::new(),
-            sources: Rc::new(RefCell::new(Slab::new())),
+            inner: Rc::new(Inner {
+                poll: RefCell::new(Epoll::new()?),
+                sources: RefCell::new(Slab::new()),
+            }),
         })
     }
 
     pub fn handle(&self) -> Handle {
         Handle {
-            poll: self.poll.clone(),
-            sources: self.sources.clone(),
+            inner: self.inner.clone(),
         }
     }
 
@@ -51,11 +51,15 @@ impl Reactor {
     pub fn react(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         // TODO: Figure out what the use case for the driver tick is here
 
-        self.poll.poll(&mut self.events, timeout)?;
+        // TODO: Simply construction of types to remove this long call
+        self.inner
+            .poll
+            .borrow_mut()
+            .poll(&mut self.events, timeout)?;
 
         for event in self.events.iter() {
             let token = event.token();
-            if let Some(io_source) = self.sources.borrow_mut().get_mut(token.0) {
+            if let Some(io_source) = self.inner.sources.borrow_mut().get_mut(token.0) {
                 // TODO: Ensure the resource is not stale
                 io_source.set_readiness(event);
                 io_source.wake(event)
@@ -70,7 +74,7 @@ impl Reactor {
 // construct between the handle and the reactor for registering sources
 impl Handle {
     pub fn register(&mut self, io: RawFd, interest: Interest) -> io::Result<IoSource> {
-        let mut sources = self.sources.borrow_mut();
+        let mut sources = self.inner.sources.borrow_mut();
         let entry = sources.vacant_entry();
         let tick = 0;
 
@@ -82,14 +86,17 @@ impl Handle {
             ..Default::default()
         };
 
-        self.poll.add(io, interest, token.clone())?;
+        self.inner
+            .poll
+            .borrow_mut()
+            .add(io, interest, token.clone())?;
         entry.insert(io_source.clone());
 
         Ok(io_source)
     }
 
     pub fn deregister(&mut self, source: IoSource) -> io::Result<()> {
-        self.sources.borrow_mut().remove(source.token.0);
-        self.poll.delete(source.io)
+        self.inner.sources.borrow_mut().remove(source.token.0);
+        self.inner.poll.borrow_mut().delete(source.io)
     }
 }
