@@ -4,7 +4,7 @@ Writing on the development of this runtime
 
 ## 20 August 2021
 
-> Topic: Async task design
+### Async task design
 
 An issue I'm facing now is how to design the tasks and runtime. It requires an interesting design to
 work, although I haven't entirely figured out the details. A 🧠 dump  of thoughts so far.
@@ -95,7 +95,7 @@ actually works I'm not sure.
 
 ## 23 August 2021
 
-> Topic: Async task design
+### Async task design
 
 Both async-std and Tokio return `JoinHandle`'s. These are handles to the underlying task and returned
 when a call to spawn happens. The idea is to have a `Runnable` and a `Task<T>`. Still not sure on all
@@ -124,7 +124,7 @@ I'm sure I can design something simple first.
 
 ## 24 August 2021
 
-> Topic: Async task design
+### Async task design
 
 `async-task` has a nice idea for its `spawn` function where it takes in a scheduling function which
 then passes that onto the runnable for scheduling.
@@ -160,7 +160,7 @@ thing working.
 
 ## 30 August 2021
 
-> Topic: Async task design
+### Async task design
 
 I'm pretty confused as to how `task` and `runnable` are related to each other from a usage perspective.
 For exmple, in `async-task` they have an example
@@ -197,7 +197,7 @@ Back to the drawing board!
 
 ## 7 November 2021
 
-> Topic: Async task design
+### Async task design
 
 We're back after a long break! I've been reading source code like you can't believe. We've made progress,
 we're doing good.
@@ -212,7 +212,7 @@ Moving forward, I need to start understanding how to keep state of the task is n
 
 ## 22 November 2021
 
-> Topic: Runtime design
+### Runtime design
 
 A single-threaded executor requires two threads for the entire program. The single-threaded executor
 just means the executor itself is single-threaded but the application will have to use two threads
@@ -220,12 +220,12 @@ in order to not block the main program.
 
 ## 4 January 2022
 
-> Topic: Who knows
+### Who knows
 
 Another year, who would've guessed I'd still be working on this. Nonetheless, we've made a bunch of
 progress.
 
-> Topic: Progress update
+### Progress update
 
 So as it stands, we can run basic futures. There are a number of areas that need to be worked on however
 but that will mostly be left to do after implementing networking I/O. Nonetheless, it is worth running
@@ -331,14 +331,14 @@ The underlying task is processed by the executor as shown earlier. So to walk th
 6. The executor will then proceeed to process all the tasks
 7. Once that is complete, back to 1
 
-> Topic: Runtime design
+### Runtime design
 
 The idea of using two threads stated above came from some code I read elsewhere. In that specific instance,
 it made sense to use two threads because it's easy and simplified the code. However, it is isn't necessary
 to use two threads. Given that using threads requires synchronization primitives, it's best to leave
 it out if you don't need it. Hence, that is our plan.
 
-> Topic: Wakers and reference counting
+### Wakers and reference counting
 
 In most executor implementations, wakers are reference counted data structures. From my understanding,
 this is the case so that the runtime can determine the logic behind the reference counting. For example,
@@ -346,7 +346,7 @@ in Tokio, a task starts with a reference count of 3. There are [alternative desi
 to using reference counting but I think it's the best solution for multithreaded executors. Ours is a
 single-threaded executor but for the sake of learning, I am still using a reference counted waker design.
 
-> Topic: Task state
+### Task state
 
 In both `async-task` and `tokio`, task state is stored as an `AtomicUsize`. This allows access to be
 synchronized. Given this, they've encoded the state using bitmasks. In my design, I don't need this
@@ -354,7 +354,7 @@ and could implement the same thing with an enum. I was planning on opting for th
 little experience with bitmasks (and will need it when working with epoll) so once again, I might as
 well learn.
 
-> Topic: Task state update
+### Task state update
 
 Turns out it's pretty straightforward. All we do is have certain bits represent a value. If we want
 to check if a bit is set, we AND the bit we care about with the state. This will evaluate to 0 for
@@ -364,7 +364,7 @@ be set to 0, it won't change what is currently set.
 
 ## 7 January 2022
 
-> Topic: Pinning futures
+### Pinning futures
 
 Futures can be pinned on the heap or the stack. Pinning them on the stack is considered unsafe it does
 not gaurantee that the future will be held at a stable memory location. In Tokio and async-std, they
@@ -376,7 +376,7 @@ on the stack as we allocate memory for the future on the heap at creation.
 
 Note: I will admit, my mental model here is still not the strongest
 
-> Topic: Task wakers
+### Task wakers
 
 When writing the `block_on` function, I realised the waker used is different from that used in a task.
 This warped my mental quite significantly.
@@ -443,3 +443,149 @@ Next question is why are they different? Here I'm still improving my mental mode
 that the runtime's threads get put to sleep if there is no work to do. However, they need to be woken
 up in the event new work is queued. The waker in the `block_on` `wake` function performs this wake up
 when invoked. The woken up thread will then fetch the output of the task.
+
+## 24 January 2022
+
+I've written way too much code. Hopefully I remember everything I need to document.
+
+### Reactor design
+
+At present, the reactor design is simple (as I don't have many requirements). It was defined as
+
+```rust
+// This is simplified for the sake of example
+struct Reactor {
+    poll: Epoll,
+    // Storage for all the IO resources
+    sources: Slab<IoSource>,
+    // Stores the events on a call to `poll`
+    events: Events
+}
+```
+
+The part that took me some time to understand was the difference between `sources` and `events`. The
+`events` field is a vector to store the results of a call to `epoll_wait`. However, we still need to
+keep an active list of what resources we are managing. That is the point of `sources`. An event in
+`events` is linked to a resource in `sources` through a `Token`. When we register an IO resource with
+epoll, we give the `event` and the `source` the token
+
+```rust
+struct Token(usize);
+
+pub fn register(&mut self, io: RawFd, interest: Interest) -> io::Result<IoSource> {
+    let entry = self.sources.vacant_entry();
+    // entry.key() returns the index in the slab where this entry points to
+    // we store that key in the Token
+    let token = Token(entry.key());
+    let io_source = IoSource {
+        // Omitted irrelevant fields
+        token
+    };
+
+    self.poll.add(io, interest, token.clone())?;
+
+    Ok(io_source)
+}
+```
+
+As we can see, we register interest in the IO resource with epoll and then save the corresponding
+source in the reactor. Its utility is discussed in the next section.
+
+### IO type design
+
+Being naive, I thought this would be a fairly straightforward process. As it turns out with everything
+computing, it took much longer and was definitely more complicated than I had expected. I'll go through
+implementing a `TcpStream`.
+
+First off, why do we need our own `TcpStream`? As you probably suspect, it needs to integrate with our
+system (i.e epoll). So we need something like
+
+```rust
+struct TcpStream {
+    inner: std::net::TcpStream
+}
+```
+
+In order for this to work, we need a bridge the connects the `TcpStream` to our reactor. In `async-std`
+the bridge is named `Async` and in `Tokio` it's `PollEvented`. For lack of a better name, I've called
+it `Pollable`. The above code is now
+
+```rust
+struct TcpStream {
+    inner: Pollable<std::net::TcpStream>
+}
+```
+
+where a `Pollable`
+
+```rust
+struct Pollable<T> {
+    io: T
+}
+```
+
+The `Pollable` is responsible for registering the underlying IO resource in the reactor. In reality,
+a `Pollable` object is defined as
+
+```rust
+struct Pollable<T> {
+    io: T,
+    source: IoSource
+}
+```
+
+The famed `IoSource` is back! Our `Pollable` object contains both the actual IO object (i.e `std::net::TcpStream`)
+and an `IoSource` (which is reference counted). The `IoSource` itself has a number of methods (many to
+related reading and writing of data) since it contains the data for making those judgements.
+
+### Runtime context
+
+We want to:
+
+1. Spawn all tasks onto the *same* executor
+2. Be able to access the executor from anywhere in the program
+
+The runtime has a handle which is used to interact with it. Through the handle, tasks are spawned onto
+the executor. It is defined as
+
+```rust
+struct Handle {
+    spawner: Spawner,
+    // This the handle of the reactor instance
+    io: IoHandle
+}
+```
+
+To meet our requirements, we store the handle in thread local storage and fetch the handle from there
+whenever we need to interact with the runtime (and the reactor).
+
+
+
+### Cloning Epoll
+
+I ran into a fun bug with my epoll library. The `Epoll` object is defined as
+
+```rust
+#[derive(Clone)]
+Epoll {
+    fd: RawFd
+}
+```
+
+Since `RawFd` is an integer, a clone of this will just copy the integer value. This is kind of what
+we want: a copy of `Epoll` points to the same underlying epoll instance. We've also implemented the
+`Drop` trait for `Epoll`
+
+```rust
+impl Drop for Epoll {
+    fn drop(&self) {
+        // This performs a syscall, closing the file descriptor
+        close(self.fd)
+    }
+}
+```
+
+Herein lies the problem. Since we can clone the `Epoll` object, when *any* of the clones go out of scope,
+it sends a syscall to close the epoll instance. The easy fix is to wrap `Epoll` in a reference counted
+structure when it is used. This is what I've done. However, maybe you want don't want to do that. The
+solution here is the `dup()`/`dup2()` syscalls, usually performed through `fcntl`.
