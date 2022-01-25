@@ -22,18 +22,6 @@ pub(crate) struct IoSource {
     pub(crate) writer: Option<Waker>,
 }
 
-#[derive(Clone, Default)]
-struct Waiter {
-    // waker for poll_readable/poll_writeable
-    waker: Option<Waker>,
-    // TODO: Determine when this is actually necessary
-    // For context: I'm only supporting tcp/udp streams. In no
-    // circumstance can I think of a way it's possible for multiple
-    // tasks to be waiting on the *same* tcp read/write
-    // wakers interested in this event
-    // wakers: Slab<Waker>,
-}
-
 #[derive(Clone, Copy)]
 pub(crate) enum Direction {
     Read,
@@ -118,15 +106,3 @@ impl IoSource {
         self.readiness & Readiness::WRITABLE == Readiness::WRITABLE
     }
 }
-
-// impl Waiter {
-//     fn drain_into(&mut self, vec: &mut Vec<Waker>) {
-//         if let Some(waker) = self.waker.take() {
-//             vec.push(waker);
-//         }
-
-//         for waker in self.wakers.drain() {
-//             vec.push(waker);
-//         }
-//     }
-// }
