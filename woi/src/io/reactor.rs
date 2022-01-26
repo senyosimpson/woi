@@ -9,26 +9,30 @@ use slab::Slab;
 use super::epoll::{Epoll, Events, Interest, Token};
 use super::io_source::IoSource;
 
-pub(crate) struct Inner {
-    pub poll: RefCell<Epoll>,
-    // TODO: This sucks lmao
-    pub sources: RefCell<Slab<Rc<RefCell<IoSource>>>>,
+/// The reactor
+///
+/// It contains the event queue (epoll) and a list of all IO
+/// resources in use. It is responsible for polling for new
+/// events and dispatching them to the relevant handlers
+pub(crate) struct Reactor {
+    /// Collection of events. Used across calls to [`Epoll::poll`]
+    events: Events,
+    /// Shared state between the reactor and its handle
+    inner: Rc<Inner>,
 }
 
+/// Handle to the reactor
 #[derive(Clone)]
 pub(crate) struct Handle {
     pub inner: Rc<Inner>,
 }
 
-impl Handle {
-    pub fn current() -> Self {
-        crate::runtime::handle::io()
-    }
-}
-
-pub(crate) struct Reactor {
-    events: Events,
-    inner: Rc<Inner>,
+pub(crate) struct Inner {
+    /// The event queue
+    pub poll: Epoll,
+    /// Collection of IO resources registered in the event queue
+    // TODO: Can I think of something nicer?
+    pub sources: RefCell<Slab<Rc<IoSource>>>,
 }
 
 impl Reactor {
@@ -36,7 +40,7 @@ impl Reactor {
         Ok(Reactor {
             events: Events::new(),
             inner: Rc::new(Inner {
-                poll: RefCell::new(Epoll::new()?),
+                poll: Epoll::new()?,
                 sources: RefCell::new(Slab::new()),
             }),
         })
@@ -52,18 +56,14 @@ impl Reactor {
     pub fn react(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         // TODO: Figure out what the use case for the driver tick is here
 
-        // TODO: Simply construction of types to remove this long call
-        self.inner
-            .poll
-            .borrow_mut()
-            .poll(&mut self.events, timeout)?;
+        self.inner.poll.poll(&mut self.events, timeout)?;
 
         for event in self.events.iter() {
             let token = event.token();
-            if let Some(io_source) = self.inner.sources.borrow_mut().get_mut(token.0) {
+            if let Some(io_source) = self.inner.sources.borrow().get(token.0) {
                 // TODO: Ensure the resource is not stale
-                io_source.borrow_mut().set_readiness(event);
-                io_source.borrow_mut().wake(event)
+                io_source.set_readiness(event);
+                io_source.wake(event)
             }
         }
 
@@ -71,34 +71,43 @@ impl Reactor {
     }
 }
 
-// NOTE: Attaching these methods to the handle as a hack. There should be some shared
-// construct between the handle and the reactor for registering sources
+// ===== impl Handle =====
+
 impl Handle {
-    pub fn register(&mut self, io: RawFd, interest: Interest) -> io::Result<Rc<RefCell<IoSource>>> {
-        let mut sources = self.inner.sources.borrow_mut();
+    pub fn current() -> Self {
+        crate::runtime::handle::io()
+    }
+
+    pub fn inner(&self) -> Rc<Inner> {
+        self.inner.clone()
+    }
+}
+
+// ==== impl Inner =====
+
+impl Inner {
+    pub fn register(&self, io: RawFd, interest: Interest) -> io::Result<Rc<IoSource>> {
+        let mut sources = self.sources.borrow_mut();
         let entry = sources.vacant_entry();
         let tick = 0;
 
         let token = Token(entry.key());
-        let io_source = Rc::new(RefCell::new(IoSource {
+        let io_source = Rc::new(IoSource {
             io,
             token,
             tick,
             ..Default::default()
-        }));
+        });
 
-        self.inner
-            .poll
-            .borrow_mut()
-            .add(io, interest, token.clone())?;
+        self.poll.add(io, interest, token.clone())?;
 
         entry.insert(io_source.clone());
 
         Ok(io_source)
     }
 
-    pub fn deregister(&mut self, source: IoSource) -> io::Result<()> {
-        self.inner.sources.borrow_mut().remove(source.token.0);
-        self.inner.poll.borrow_mut().delete(source.io)
+    pub fn deregister(&self, token: Token) -> io::Result<()> {
+        let source = self.sources.borrow_mut().remove(token.0);
+        self.poll.delete(source.io)
     }
 }
