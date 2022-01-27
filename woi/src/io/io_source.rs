@@ -106,7 +106,14 @@ impl IoSource {
     }
 
     pub fn poll_readable(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.poll_ready(Direction::Read, cx)
+        tracing::debug!("Invoking poll_readable");
+        let res = self.poll_ready(Direction::Read, cx);
+        match res {
+            Poll::Ready(Ok(())) => tracing::debug!("poll_readable returned Poll::Ready(ok)"),
+            Poll::Ready(Err(_)) => tracing::debug!("poll_readable returned Poll::Ready(err)"),
+            Poll::Pending => tracing::debug!("poll_readable returned Poll::Pending")
+        }
+        res
     }
 
     pub fn poll_writable(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {

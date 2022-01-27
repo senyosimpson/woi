@@ -90,19 +90,26 @@ impl Inner {
                 return v;
             }
 
-            // Since we're here, we know the 'block_on' future isn't ready. At the same time,
-            // there are no events to process meaning that we are waiting for some
-            // tasks. We "park" the thread by waiting on the reactor for new events
+            // Since we're here, we know the 'block_on' future isn't ready. We then
+            // check if there have been tasks scheduled onto the runtime.
+            // 1. If there are no tasks on the runtime, it means we're waiting on IO
+            //    resources (e.g I'm performing a read and waiting on data to arrive).
+            //    Essentially, this means we have events registered in our reactor and
+            //    we are waiting for them to fire.
+            // 2. If there are tasks spawned onto the runtime, we can start processing them
             if self.queue.borrow().is_empty() {
+                tracing::debug!("Parking on epoll");
                 self.reactor
                     .react(None)
                     .expect("Reactor failed to process events");
             }
 
-            // We have events to process. We process all of them and then proceed
-            // to poll the outer future again.
+            // We have tasks to process. We process all of them. After, we proceed to
+            // to poll the outer future again with the hope that we aren't waiting on
+            // anymore resources and are now finished our work (unless we are a web
+            // server of course)
             while let Some(task) = self.queue.borrow_mut().pop_front() {
-                task.poll();
+                task.run();
             }
         }
     }

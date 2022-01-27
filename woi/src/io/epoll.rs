@@ -5,6 +5,7 @@
 //! This crate *does not* expose all the interest bitflags available for epoll
 //! since they were not necessary for this project.
 
+use std::fmt::Display;
 use std::io;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::time::Duration;
@@ -15,29 +16,15 @@ use libc;
 /// Provides functionality for interacting epoll.
 ///
 /// # Usage
-///
-/// ```no_run
-/// use std::io;
-/// use woi::io::epoll::{Epoll, Events};
-///
-/// fn main() -> io::Result<()> {
-///     let mut poll = Epoll::new()?;
-///     let mut events = Events::new();
-///     
-///     let listener = TcpListener::bind("localhost:8080");
-/// 
-///     
-/// }
-/// ```
 pub struct Epoll {
     pub fd: RawFd,
 }
 
 /// An equivalent of `libc::epoll_data`
-/// 
+///
 /// Uses #[repr(C)] for interoperability with C.
 /// Learn more [here](https://doc.rust-lang.org/reference/type-layout.html#the-c-representation)
-/// 
+///
 /// Epoll events are packed, hence we must specify the packed configuration
 /// as well. For more, read [here](https://doc.rust-lang.org/reference/type-layout.html#the-alignment-modifiers)
 /// and [here](https://www.mikroe.com/blog/packed-structures-make-memory-feel-safe)
@@ -60,7 +47,7 @@ bitflags! {
 }
 
 /// Control options for `epoll_ctl`
-/// 
+///
 /// The enum representation is changed to i32 in order to work with
 /// libc epoll bindings.
 ///
@@ -137,6 +124,7 @@ impl Epoll {
             None => -1, // TThis blocks indefinitely
         };
         let n_events = epoll::wait(self.fd, events, timeout)?;
+        tracing::debug!("Epoll: Received {} events", n_events);
 
         // This is actually safe to call because `epoll::wait` returns the
         // number of events that were returned. Got this from Mio:
@@ -203,6 +191,31 @@ impl Event {
 
         epollout || epollhup
     }
+
+    pub(crate) fn interest(&self) -> Interest {
+        // Gauranteed to never panic so can unwrap
+        Interest::from_bits(self.interest).unwrap()
+    }
+}
+
+// ===== impl Interest =====
+
+impl Display for Interest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let interest = self.bits() as libc::c_int;
+
+        let epollin = interest & libc::EPOLLIN == libc::EPOLLIN;
+        let epollpri = interest & libc::EPOLLPRI == libc::EPOLLPRI;
+        let epollhup = interest & libc::EPOLLHUP == libc::EPOLLHUP;
+        let epollrdhup = interest & libc::EPOLLRDHUP == libc::EPOLLRDHUP;
+        let epollout = interest & libc::EPOLLOUT == libc::EPOLLOUT;
+
+        write!(
+            f,
+            "Interest {{ epollin={}, epollout={}, epollpri={}, epollhup={}, epollrdhup={} }}",
+            epollin, epollout, epollpri, epollhup, epollrdhup
+        )
+    }
 }
 
 // ===== Standalone functions wrapping libc::epoll_* calls =====
@@ -227,7 +240,12 @@ mod epoll {
     // operation. epoll_ctl still expects a pointer so we pass in a null
     // pointer
     #[cfg(target_os = "linux")]
-    pub(super) fn ctl(epfd: RawFd, op: CtlOp, fd: RawFd, mut event: Option<Event>) -> io::Result<()> {
+    pub(super) fn ctl(
+        epfd: RawFd,
+        op: CtlOp,
+        fd: RawFd,
+        mut event: Option<Event>,
+    ) -> io::Result<()> {
         let event = match &mut event {
             Some(event) => event as *mut Event as *mut libc::epoll_event,
             None => ptr::null_mut(),

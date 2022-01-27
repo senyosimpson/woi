@@ -38,7 +38,7 @@ pub(crate) struct Inner {
 impl Reactor {
     pub fn new() -> io::Result<Reactor> {
         Ok(Reactor {
-            events: Events::new(),
+            events: Events::with_capacity(1024),
             inner: Rc::new(Inner {
                 poll: Epoll::new()?,
                 sources: RefCell::new(Slab::new()),
@@ -59,6 +59,12 @@ impl Reactor {
         self.inner.poll.poll(&mut self.events, timeout)?;
 
         for event in self.events.iter() {
+            tracing::debug!(
+                "Epoll: processing Event {{ token={}, interest={} }}",
+                event.token().0,
+                event.interest()
+            );
+
             let token = event.token();
             if let Some(io_source) = self.inner.sources.borrow().get(token.0) {
                 // TODO: Ensure the resource is not stale
@@ -87,6 +93,8 @@ impl Handle {
 
 impl Inner {
     pub fn register(&self, io: RawFd, interest: Interest) -> io::Result<Rc<IoSource>> {
+        tracing::debug!("Registering task in epoll");
+
         let mut sources = self.sources.borrow_mut();
         let entry = sources.vacant_entry();
         let tick = 0;
@@ -107,6 +115,7 @@ impl Inner {
     }
 
     pub fn deregister(&self, token: Token) -> io::Result<()> {
+        tracing::debug!("Deregistering task from epoll");
         let source = self.sources.borrow_mut().remove(token.0);
         self.poll.delete(source.io)
     }
