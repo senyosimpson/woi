@@ -1,16 +1,45 @@
-use std::{
-    alloc::{self, Layout},
-    future::Future,
-    mem,
-    pin::Pin,
-    ptr::NonNull,
-    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
-};
+use std::alloc::{self, Layout};
+use std::future::Future;
+use std::mem;
+use std::pin::Pin;
+use std::ptr::NonNull;
+use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-use crate::task::{header::Header, state::State, task::Task};
+use crate::task::header::Header;
+use crate::task::state::State;
+use crate::task::task::Task;
 
-pub(crate) trait Schedule {
-    fn schedule(&self, task: Task);
+// The C representation means we have guarantees on
+// the memory layout of the task
+/// The underlying task containing the core components of a task
+#[repr(C)]
+pub(crate) struct RawTask<F: Future, S> {
+    /// Header of the task. Contains data related to the state
+    /// of a task
+    pub(crate) header: *const Header,
+    /// Scheduler is responsible for scheduling tasks onto the
+    /// runtime. When a task is woken, it calls the related
+    /// scheduler to schedule itself
+    pub(crate) scheduler: *const S,
+    /// The status of a task. This is either a future or the
+    /// output of a future
+    pub(crate) status: *mut Status<F>,
+}
+
+pub enum Status<F: Future> {
+    Running(F),
+    Finished(F::Output),
+    Consumed,
+}
+
+/// Memory layout of a task
+/// 
+/// It contains both the memory layout and the offsets into
+/// memory in order to access the fields in the task
+pub struct TaskLayout {
+    layout: Layout,
+    offset_schedule: usize,
+    offset_status: usize,
 }
 
 pub struct TaskVTable {
@@ -19,29 +48,13 @@ pub struct TaskVTable {
     pub(crate) schedule: unsafe fn(*const ()),
 }
 
-// The status of a future. This contains either the future
-// itself or the output of the future
-pub enum Status<F: Future> {
-    Running(F),
-    Finished(F::Output),
-    Consumed,
+// All schedulers must implement the Schedule trait. They
+// are responsible for sending tasks to the runtime queue
+pub(crate) trait Schedule {
+    fn schedule(&self, task: Task);
 }
 
-// Memory layout of a task
-pub struct TaskLayout {
-    layout: Layout,
-    offset_schedule: usize,
-    offset_status: usize,
-}
-
-// Having the C representation means we are guaranteed
-// on the memory layout of the task
-#[repr(C)]
-pub(crate) struct RawTask<F: Future, S> {
-    pub(crate) header: *const Header,
-    pub(crate) scheduler: *const S,
-    pub(crate) status: *mut Status<F>,
-}
+// ===== impl RawTask =====
 
 impl<F, S> RawTask<F, S>
 where

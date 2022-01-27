@@ -1,6 +1,7 @@
 use std::task::Waker;
 
-use crate::task::{raw::TaskVTable, state::State};
+use crate::task::raw::TaskVTable;
+use crate::task::state::State;
 
 pub(crate) struct Header {
     pub state: State,

@@ -1,13 +1,14 @@
-use std::{
-    future::Future,
-    marker::PhantomData,
-    pin::Pin,
-    ptr::NonNull,
-    task::{Context, Poll},
-};
+use std::future::Future;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::ptr::NonNull;
+use std::task::{Context, Poll};
 
+use crate::task::header::Header;
+
+/// A handle to the task
 pub struct JoinHandle<T> {
-    // Pointer to raw task
+    /// Pointer to raw task
     pub(crate) raw: NonNull<()>,
     pub(crate) _marker: PhantomData<T>,
 }
@@ -16,8 +17,6 @@ impl<T> Future for JoinHandle<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        use crate::task::header::Header;
-
         let raw = self.raw.as_ptr();
         // Should I use interior mutability here instead?
         let header = raw as *mut Header;
@@ -35,7 +34,7 @@ impl<T> Future for JoinHandle<T> {
                 };
                 return Poll::Ready(output);
             }
-            
+
             return Poll::Pending;
         }
     }
