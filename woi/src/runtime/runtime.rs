@@ -1,24 +1,15 @@
-use std::{
-    cell::RefCell,
-    collections::VecDeque,
-    future::Future,
-    marker::PhantomData,
-    rc::Rc,
-    task::{Context, Poll},
-};
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::future::Future;
+use std::marker::PhantomData;
+use std::rc::Rc;
+use std::task::{Context, Poll};
 
 use super::handle::Handle;
-use crate::{
-    io::reactor::Reactor,
-    task::{join::JoinHandle, raw::RawTask, raw::Schedule, task::Task},
-};
-
-#[derive(Clone)]
-pub struct Spawner {
-    queue: Queue,
-}
-
-type Queue = Rc<RefCell<VecDeque<Task>>>;
+use crate::io::reactor::Reactor;
+use crate::task::join::JoinHandle;
+use crate::task::raw::{RawTask, Schedule};
+use crate::task::task::Task;
 
 pub struct Runtime {
     // Holds the reactor and task queue
@@ -34,6 +25,13 @@ pub struct Inner {
     queue: Queue,
 }
 
+#[derive(Clone)]
+pub struct Spawner {
+    queue: Queue,
+}
+
+type Queue = Rc<RefCell<VecDeque<Task>>>;
+
 // ===== impl Runtime =====
 
 impl Runtime {
@@ -46,7 +44,7 @@ impl Runtime {
         let reactor = Reactor::new().expect("Could not start reactor!");
         let io_handle = reactor.handle();
 
-        // runtime handle
+        // Runtime handle
         let handle = Handle {
             spawner: spawner.clone(),
             io: io_handle,
