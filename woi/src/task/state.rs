@@ -7,7 +7,6 @@ const RUNNING: usize = 1 << 1;
 // The task is complete
 const COMPLETE: usize = 1 << 2;
 
-
 // The join handle for the task still exists
 const JOIN_HANDLE: usize = 1 << 3;
 
@@ -51,10 +50,12 @@ impl State {
 
     pub fn ref_incr(&mut self) {
         self.state += REF_ONE;
+        tracing::debug!("Incr ref count. Value: {}", self.ref_count())
     }
 
     pub fn ref_decr(&mut self) {
         self.state -= REF_ONE;
+        tracing::debug!("Decr ref count. Value: {}", self.ref_count())
     }
 
     pub fn ref_count(&self) -> usize {
@@ -64,8 +65,8 @@ impl State {
         (self.state & REF_COUNT_MASK) >> REF_COUNT_SHIFT
     }
 
-    pub fn set_join_handle(&mut self) {
-        self.state |= JOIN_HANDLE;
+    pub fn unset_join_handle(&mut self) {
+        self.state &= !JOIN_HANDLE;
     }
 
     pub fn set_join_waker(&mut self) {
@@ -80,12 +81,48 @@ impl State {
         self.state & COMPLETE == COMPLETE
     }
 
-    pub fn transition_to_complete(&mut self) {
+    pub fn set_complete(&mut self) {
         self.state |= COMPLETE;
     }
 
-    pub fn transition_to_running(&mut self) {
+    pub fn is_scheduled(&self) -> bool {
+        self.state & SCHEDULED == SCHEDULED
+    }
+
+    pub fn set_scheduled(&mut self){
+        self.state |= SCHEDULED;
+    }
+
+    pub fn unset_scheduled(&mut self){
+        self.state &= !SCHEDULED;
+    }
+
+    pub fn set_running(&mut self){
         self.state |= RUNNING;
+    }
+
+    pub fn unset_running(&mut self){
+        self.state &= !RUNNING;
+    }
+
+    pub fn transition_to_complete(&mut self) {
+        self.set_complete();
+        self.unset_running();
+    }
+
+    pub fn transition_to_running(&mut self) {
+        self.set_running();
+        self.unset_scheduled();
+    }
+
+    pub fn transition_to_idle(&mut self) {
+        self.unset_running();
+        self.unset_scheduled();
+    }
+
+    pub fn transition_to_scheduled(&mut self) {
+        self.set_scheduled();
+        self.unset_running();
     }
 }
 
