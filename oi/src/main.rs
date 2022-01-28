@@ -1,18 +1,47 @@
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+use tracing_subscriber;
 use woi;
-// use woi::net::TcpListener;
-// use woi::io::{AsyncReadExt, AsyncWriteExt};
+use woi::io::AsyncReadExt;
+use woi::net::TcpStream;
 
 fn main() {
+    tracing_subscriber::fmt::init();
+
     let rt = woi::Runtime::new();
     rt.block_on(async {
-        let handle = rt.spawn(async {
-            println!("Hello Senyo");
-            5
+
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+
+        let handle = rt.spawn(async move {
+            let mut buf = vec![0; 1024];
+            let n = stream
+                .read(&mut buf)
+                .await
+                .expect("failed to read data from socket");
+            println!("Received message: {}", String::from_utf8(buf).unwrap());
+            n
         });
 
-        let value = handle.await;
-        println!("Value: {}", value);
-    });
+        let n = handle.await;
+        println!("Read {} bytes", n)
+        // println!("Received message: {}", String::from_utf8(buf).unwrap());
+    })
+    // at this point, the io resource gets dropped as well as the handle
+    
+
+
+
+    // rt.block_on(async {
+    //     let handle = rt.spawn(async {
+    //         println!("Hello Senyo");
+    //         5
+    //     });
+
+    //     let value = handle.await;
+    //     println!("Value: {}", value);
+    // });
 
     // println!("Got {}", out);
 
