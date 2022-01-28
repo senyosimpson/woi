@@ -18,24 +18,32 @@ impl<T> Future for JoinHandle<T> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let raw = self.raw.as_ptr();
-        // Should I use interior mutability here instead?
         let header = raw as *mut Header;
+        let mut output = Poll::Pending;
 
         unsafe {
-            let state = &(*header).state;
-            if !state.is_complete() {
+            tracing::debug!("JoinHandle is complete: {}", (*header).state.is_complete());
+
+            if !(*header).state.is_complete() {
                 // Register waker with the task
                 (*header).register_waker(cx.waker());
                 (*header).state.set_join_waker();
             } else {
-                let output = {
-                    let out = ((*header).vtable.get_output)(self.raw.as_ptr());
-                    (out as *mut T).read()
-                };
-                return Poll::Ready(output);
+                tracing::debug!("JoinHandle ready");
+                ((*header).vtable.get_output)(self.raw.as_ptr(), &mut output as *mut _ as *mut ());
+                return output;
             }
 
-            return Poll::Pending;
+            return output;
         }
+    }
+}
+
+impl<T> Drop for JoinHandle<T> {
+    fn drop(&mut self) {
+        tracing::debug!("Dropping JoinHandle");
+        let raw = self.raw.as_ptr();
+        let header = raw as *mut Header;
+        unsafe { ((*header).vtable.drop_join_handle)(self.raw.as_ptr()) }
     }
 }
