@@ -2,8 +2,6 @@ use std::ptr::NonNull;
 
 use crate::task::header::Header;
 
-use super::raw::RawTask;
-
 pub(crate) struct Task {
     pub(crate) raw: NonNull<()>
 }
@@ -17,7 +15,7 @@ impl Task {
         }
     }
     
-    pub fn poll(self) {
+    pub fn run(self) {
         let ptr = self.raw.as_ptr();
         let header = ptr as *const Header;
         unsafe {
