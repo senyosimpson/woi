@@ -33,7 +33,6 @@ const REF_COUNT_SHIFT: usize = REF_COUNT_MASK.count_zeros() as usize;
 
 const REF_ONE: usize = 1 << REF_COUNT_SHIFT;
 
-
 // The task has an initial reference count of two
 //   * The JoinHandle
 //   * The internal Task
@@ -45,7 +44,9 @@ pub(crate) struct State {
 
 impl State {
     pub fn new() -> State {
-        State { state: INITIAL_STATE }
+        State {
+            state: INITIAL_STATE,
+        }
     }
 
     pub fn ref_incr(&mut self) {
@@ -89,47 +90,68 @@ impl State {
         self.state & SCHEDULED == SCHEDULED
     }
 
-    pub fn set_scheduled(&mut self){
+    pub fn set_scheduled(&mut self) {
         self.state |= SCHEDULED;
     }
 
-    pub fn unset_scheduled(&mut self){
+    pub fn unset_scheduled(&mut self) {
         self.state &= !SCHEDULED;
     }
 
-    pub fn set_running(&mut self){
+    pub fn set_running(&mut self) {
         self.state |= RUNNING;
     }
 
-    pub fn unset_running(&mut self){
+    pub fn unset_running(&mut self) {
         self.state &= !RUNNING;
     }
 
     pub fn transition_to_complete(&mut self) {
         self.set_complete();
         self.unset_running();
+        tracing::debug!("Transitioned to complete. State: {}", self);
     }
 
     pub fn transition_to_running(&mut self) {
         self.set_running();
         self.unset_scheduled();
+        tracing::debug!("Transitioned to running. State: {}", self);
     }
 
     pub fn transition_to_idle(&mut self) {
         self.unset_running();
         self.unset_scheduled();
+        tracing::debug!("Transitioned to idle. State: {}", self);
     }
 
     pub fn transition_to_scheduled(&mut self) {
         self.set_scheduled();
         self.unset_running();
+        tracing::debug!("Transitioned to scheduled. State: {}", self);
+    }
+}
+
+impl std::fmt::Display for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // scheduled | running | complete | join handle | join waker | ref count
+        let scheduled = self.is_scheduled();
+        let running = self.state & RUNNING == RUNNING;
+        let complete = self.is_complete();
+        let join_handle = self.state & JOIN_HANDLE == JOIN_HANDLE;
+        let join_waker = self.has_join_waker();
+        let ref_count = self.ref_count();
+        write!(
+            f,
+            "State {{ scheduled={}, running={}, complete={}, has_join_handle={}, has_join_waker={}, ref_count={} }}",
+            scheduled, running, complete, join_handle, join_waker, ref_count
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn init_ref_count_ok() {
         let state = State::new();
@@ -142,7 +164,7 @@ mod tests {
         state.ref_incr();
         assert_eq!(state.ref_count(), 3);
     }
-    
+
     #[test]
     fn decr_ref_count_ok() {
         let mut state = State::new();
