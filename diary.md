@@ -559,8 +559,6 @@ struct Handle {
 To meet our requirements, we store the handle in thread local storage and fetch the handle from there
 whenever we need to interact with the runtime (and the reactor).
 
-
-
 ### Cloning Epoll
 
 I ran into a fun bug with my epoll library. The `Epoll` object is defined as
@@ -589,3 +587,118 @@ Herein lies the problem. Since we can clone the `Epoll` object, when *any* of th
 it sends a syscall to close the epoll instance. The easy fix is to wrap `Epoll` in a reference counted
 structure when it is used. This is what I've done. However, maybe you want don't want to do that. The
 solution here is the `dup()`/`dup2()` syscalls, usually performed through `fcntl`.
+
+## 31 January 2022
+
+### Channels
+
+After playing around with Elixir, I've had a growing interest in messaging systems. I'm really not sure
+why, I just find them interesting. Given that, I've decided to expand the scope here slightly and implement
+channels so that tasks can communicate with each other. This is probably the only other feature I'll
+implement (which leaves *plenty* (i.e almost everything) to be desired).
+
+I took to reading through [Flume](https://github.com/zesterer/flume), [async-channel](https://github.com/smol-rs/async-channel)
+and [Tokio](https://github.com/tokio-rs/tokio/tree/master/tokio/src/sync/mpsc) to figure out how to
+put it together. While I have some gaps on how to implement, I thought I'd just walk through the design
+options and which one I'll be going with.
+
+Both Flume and async-channel have a central object (`Shared` for the former, `Channel` for the latter)
+shared between the `Sender` and `Receiver`. All methods for sending and receiving messages are attached
+to the central object.
+
+```rust
+// All of the code here is psuedocode
+
+// ===== Channel =====
+
+struct Channel<T> {}
+
+impl<T> Channel<T> {
+    fn send(&self, message: T) -> Result<(), SendError> {}
+    fn recv(&self) -> Result<T, RecvError> {}
+}
+
+// ===== Sender =====
+
+struct Sender<T> {
+    inner: Channel<T> 
+}
+
+impl<T> Sender<T> {
+    fn send(&self, message: T) -> Result<(), SendError> {
+        self.inner.send(message)
+    }
+}
+
+// ===== Receiver =====
+
+struct Receiver<T> {
+    inner: Channel<T>
+}
+
+impl<T> Receiver<T> {
+    fn recv(&self) -> Result<T, RecvError> {
+        self.inner.recv()
+    }
+}
+```
+
+This design neat and straightforward. However, one thing I *personally* don't like about it
+is that the shared structure has both send and receive methods tied to it. In my mental model, I view
+the send and receive sides of a channel as two entirely separate entities. I'd like for my API to reflect
+that. Tokio does this nicely.
+
+```rust
+// All of the code here is psuedocode
+
+// ===== Channel =====
+struct Channel<T> {}
+
+impl<T> Channel<T> {
+    // ...
+    // ...
+}
+
+// ===== Sender =====
+
+struct Sender<T> {
+    chan: Tx<T>
+}
+
+struct Tx<T> {
+    inner: Channel<T>
+}
+
+impl<T> Sender<T> {
+    fn send(&self, message: T) -> Result<(), SendError> {
+        self.chan.send(message)
+    }
+}
+
+impl<T> Tx<T> {
+    fn send(&self, message: T) -> Result<(), SendError> {}
+}
+
+// ===== Receiver =====
+
+struct Receiver<T> {
+    chan: Rx<T>
+}
+
+struct Rx<T> {
+    inner: Channel<T>
+}
+
+impl<T> Receiver<T> {
+    fn recv(&self) -> Result<T, RecvError> {
+        self.chan.recv()
+    }
+}
+
+impl<T> Rx<T> {
+    fn recv(&self) -> Result<T, RecvError> {}
+}
+```
+
+The downside of this design is that it has more layers, making it more complicated to understand. Additionally,
+the purpose of `Channel` becomes debatable since there's not much implemented on its level.
