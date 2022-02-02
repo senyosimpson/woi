@@ -702,3 +702,14 @@ impl<T> Rx<T> {
 
 The downside of this design is that it has more layers, making it more complicated to understand. Additionally,
 the purpose of `Channel` becomes debatable since there's not much implemented on its level.
+
+## 02 February 2022
+
+### Channels
+
+As it turns out, the purpose of `Channel` was basically reduced to nothing. Adding the extra layers
+didn't improve the design in any meaningful way. The constraints are entirely different from Tokio
+which has multiple types of channels, meaning having the additional layer helps design the higher
+level abstractions. I don't have this problem.
+
+Given this, I will go with design one.
