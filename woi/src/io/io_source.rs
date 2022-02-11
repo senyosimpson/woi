@@ -22,7 +22,7 @@ pub(crate) struct IoSource {
 #[derive(Clone, Default)]
 pub(crate) struct Inner {
     /// Readiness of the source. Used to determine whether
-    /// the source is ready for reading/writing
+    /// the source is ready for reading, writing or both
     pub(crate) readiness: Readiness,
     /// Waker registered by poll_readable
     pub(crate) reader: Option<Waker>,
@@ -37,11 +37,13 @@ pub(crate) enum Direction {
 }
 
 impl IoSource {
+    /// Set the readiness of the task (readable, writable or both)
     pub fn set_readiness(&self, event: &Event) {
         let mut inner = self.inner.borrow_mut();
         inner.readiness = Readiness::from_event(event)
     }
 
+    /// Unset the bit indicating readiness for a specific [`Direction`]
     pub fn clear_readiness(&self, direction: Direction) {
         let mut inner = self.inner.borrow_mut();
         match direction {
@@ -50,6 +52,10 @@ impl IoSource {
         }
     }
 
+    /// Wakes the task linked to this IO resource. Since reading and
+    /// writing are separate tasks, it will inspect the event to
+    /// determine if it is readable or writable or both and wake the
+    /// relevant tasks.
     pub fn wake(&self, event: &Event) {
         let mut wakers = Vec::new();
 
@@ -72,6 +78,9 @@ impl IoSource {
         }
     }
 
+    /// Determines whether the IO resource is ready to be polled for
+    /// either reading or writing. In the event it is not ready, a
+    /// waker is registered in the specified direction (read/write)
     pub(crate) fn poll_ready(
         &self,
         direction: Direction,
@@ -105,6 +114,8 @@ impl IoSource {
         Poll::Pending
     }
 
+    /// Determines whether the IO resource is ready for reading. Just
+    /// forwards to [`poll_ready`] with a read [`Direction`]
     pub fn poll_readable(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         tracing::debug!("Invoking poll_readable");
         let res = self.poll_ready(Direction::Read, cx);
@@ -116,14 +127,19 @@ impl IoSource {
         res
     }
 
+    /// Determines whether the IO resource is ready for reading. Just
+    /// forwards to [`poll_ready`] with a write [`Direction`]
     pub fn poll_writable(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.poll_ready(Direction::Write, cx)
     }
 
+    /// Is the IO resource readable?
     pub fn readable(&self) -> bool {
         let inner = self.inner.borrow();
         inner.readiness & Readiness::READABLE == Readiness::READABLE
     }
+
+    /// Is the IO resource writable?
     pub fn writable(&self) -> bool {
         let inner = self.inner.borrow();
         inner.readiness & Readiness::WRITABLE == Readiness::WRITABLE
