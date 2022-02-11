@@ -13,7 +13,7 @@ use super::reactor::Handle;
 pub(crate) struct Pollable<T> {
     /// The IO resource
     io: T,
-    /// Stores 
+    /// Stores
     source: Rc<IoSource>,
     /// Handle to the reactor
     handle: Handle,
@@ -26,6 +26,16 @@ impl<T> Pollable<T> {
 }
 
 // impl<T> Unpin for Pollable<T> {}
+
+impl<T> Pollable<T> {
+    pub fn poll_readable(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.source.poll_readable(cx)
+    }
+
+    pub fn poll_writable(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.source.poll_writable(cx)
+    }
+}
 
 impl<T: AsRawFd> Pollable<T> {
     pub fn new(io: T) -> io::Result<Self> {
@@ -41,10 +51,6 @@ impl<T: AsRawFd> Pollable<T> {
 }
 
 impl<T: Read> Pollable<T> {
-    pub fn poll_readable(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.source.poll_readable(cx)
-    }
-
     pub fn poll_read(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
         loop {
             ready!(self.poll_readable(cx))?;
@@ -58,10 +64,6 @@ impl<T: Read> Pollable<T> {
                 Err(e) => return Poll::Ready(Err(e)),
             }
         }
-    }
-
-    pub fn poll_writable(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.source.poll_writable(cx)
     }
 }
 
