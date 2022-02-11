@@ -713,3 +713,60 @@ which has multiple types of channels, meaning having the additional layer helps 
 level abstractions. I don't have this problem.
 
 Given this, I will go with design one.
+
+## 11 February 2022
+
+### Timers
+
+Whilst developing channels, I was thinking of potential failure modes. For one of them, I needed to write
+some code which put one half of the channel asleep. That lead me down a rabbit hole to implement a `sleep`
+function. Turns out, almost all of the infrastructure we needed was already there making it pretty
+straightforward to implement.
+
+I used the `timerfd` syscalls and registered the resulting file descriptor in epoll to implement it.
+Let's walk through the design.
+
+We have a function `sleep` that is used as such
+
+```rust
+use woi::time::sleep;
+use std::time::Duration;
+
+sleep(Duration::from_secs(2)).await;
+```
+
+It is defined as
+
+```rust
+async fn sleep() -> Sleep {}
+```
+
+where `Sleep` is a future.
+
+```rust
+struct Sleep {
+    inner: Pollable<Timer>
+}
+```
+
+The `Timer` is responsible for creating a new `Timer` instance. This creates the timer (i.e performs
+the syscall `timer_create`) and sets its deadline (i.e the time at which it will fire an event).
+
+The only complexity came in with reasoning about how to implement the future, even though the implementation
+is straightforward (like 3 lines, lol). In the case of a timer, when the event fires, it becomes readable.
+However, we don't actually care about reading the resource when it is complete, we just care about knowing
+it is readable. Luckily, we have a function just for that, `poll_readable` which is implemented on a
+`Pollable`. Thus given everything we've done so far, implementing the future becomes boring.
+
+```rust
+impl Future for Sleep {
+    Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match ready!(self.inner.poll_readable(cx)) {
+            Ok(()) => Poll::Ready(()),
+            Err(e) => panic!("timer error: {}", e)
+        }
+    }
+}
+```
