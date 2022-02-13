@@ -176,18 +176,12 @@ where
         let raw = Self::from_ptr(ptr);
         let header = &mut *(raw.header as *mut Header);
 
-        // TODO: We need to hold a reference count if we have to schedule
-        // the task otherwise we will cause UB. This is likely to require
-        // us to have to keep the state of the task and only decrement the
-        // waker if we do not need to schedule it to run again
         header.state.transition_to_scheduled();
+        // We get 1 reference count from the caller. We schedule a task which
+        // increases our reference count by one. 
         Self::schedule(ptr);
-        // TODO: Figure out what to do in the case there is only one reference
-        // to the waker. In that case, you can't drop the waker because it will
-        // deallocate the memory of the task but it will still be on the queue.
-        // Potentially there shouldn't be a difference between wake and wake_by_ref
-        // and we leave it to the executor to deallocate a task when it is finished
-        // Self::drop_waker(ptr);
+        // We can now drop our reference from the caller
+        Self::drop_waker(ptr);
     }
 
     unsafe fn wake_by_ref(ptr: *const ()) {
