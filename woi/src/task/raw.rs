@@ -8,6 +8,7 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use crate::task::header::Header;
 use crate::task::state::State;
 use crate::task::task::Task;
+use super::header::TaskId;
 
 // The C representation means we have guarantees on
 // the memory layout of the task
@@ -45,7 +46,6 @@ pub struct TaskLayout {
 pub struct TaskVTable {
     pub(crate) poll: unsafe fn(*const ()),
     pub(crate) get_output: unsafe fn(*const (), *mut ()),
-    pub(crate) schedule: unsafe fn(*const ()),
     pub(crate) drop_join_handle: unsafe fn(*const ())
 }
 
@@ -80,14 +80,15 @@ where
             };
 
             let raw = Self::from_ptr(ptr.as_ptr());
+            let id = TaskId::new();
 
             let header = Header {
-                state: State::new(),
+                id,
+                state: State::new(id),
                 waker: None,
                 vtable: &TaskVTable {
                     poll: Self::poll,
                     get_output: Self::get_output,
-                    schedule: Self::schedule,
                     drop_join_handle: Self::drop_join_handle
                 },
             };
@@ -137,6 +138,11 @@ where
     }
 
     pub unsafe fn dealloc(ptr: *const()) {
+        let raw = Self::from_ptr(ptr);
+        let header = &*(raw.header as *mut Header); 
+        
+        tracing::debug!("Task {}: Deallocating", header.id);
+
         let layout = Self::layout();
         // TODO: Investigate if I need to use .drop_in_place()
         alloc::dealloc(ptr as *mut u8, layout.layout);
@@ -169,21 +175,6 @@ where
         tracing::debug!("Waking raw task");
         let raw = Self::from_ptr(ptr);
         let header = &mut *(raw.header as *mut Header);
-        
-        // Commenting these checks out for now. Since we only have one thread,
-        // the state at this point is deterministic (running and scheduled unset)
-
-        // // Task is complete so just consume the waker
-        // if state.is_complete() {
-        //     Self::drop_waker(ptr);
-        // }
-
-        // // If the task has already been scheduled, we don't need to do
-        // // anything. Again, consume the waker
-        // if state.is_scheduled() {
-        //     Self::drop_waker(ptr);
-        // }
-
 
         // TODO: We need to hold a reference count if we have to schedule
         // the task otherwise we will cause UB. This is likely to require
@@ -209,10 +200,15 @@ where
 
     unsafe fn schedule(ptr: *const ()) {
         let raw = Self::from_ptr(ptr);
+        let header = &mut *(raw.header as *mut Header);
 
         let task = Task {
             raw: NonNull::new_unchecked(ptr as *mut ()),
         };
+        // When we create a new task, we need to increment its reference
+        // count since we now have another 'thing' holding a reference
+        // to the raw task
+        header.state.ref_incr();
 
         let scheduler = &*raw.scheduler;
         scheduler.schedule(task)
@@ -222,6 +218,7 @@ where
     unsafe fn poll(ptr: *const ()) {
         let raw = Self::from_ptr(ptr);
         let header = &mut *(raw.header as *mut Header);
+        let id = header.id;
 
         let waker = Waker::from_raw(RawWaker::new(ptr, &Self::RAW_WAKER_VTABLE));
         let cx = &mut Context::from_waker(&waker);
@@ -241,7 +238,7 @@ where
         let future = Pin::new_unchecked(future);
         match future.poll(cx) {
             Poll::Ready(out) => {
-                tracing::debug!("Task ready");
+                tracing::debug!("Task {}: ready", id);
                 header.state.transition_to_complete();
                 if header.state.has_join_waker() {
                     header.wake_join_handle();
