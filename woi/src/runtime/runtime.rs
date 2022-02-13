@@ -28,9 +28,6 @@ pub struct Inner {
 #[derive(Clone)]
 pub struct Spawner {
     queue: Queue,
-    /// Number of tasks spawned onto the executor. As a side
-    /// benefit, it is used to assign id's to tasks
-    count: u64
 }
 
 type Queue = Rc<RefCell<VecDeque<Task>>>;
@@ -42,7 +39,6 @@ impl Runtime {
         let queue = Rc::new(RefCell::new(VecDeque::new()));
         let spawner = Spawner {
             queue: queue.clone(),
-            count: 0
         };
 
         let reactor = Reactor::new().expect("Could not start reactor!");
@@ -112,10 +108,18 @@ impl Inner {
             // to poll the outer future again with the hope that we aren't waiting on
             // anymore resources and are now finished our work (unless we are a web
             // server of course)
-            let task = self.queue.borrow_mut().pop_front();
-            match task {
-                Some(task) => task.run(),
-                None => continue
+            loop {
+                let task = self.queue.borrow_mut().pop_front();
+                match task {
+                    Some(task) => {
+                        tracing::debug!(
+                            "Task {}: Popped off executor queue and running",
+                            task.id()
+                        );
+                        task.run()
+                    }
+                    None => break,
+                }
             }
         }
     }
@@ -131,6 +135,7 @@ impl Spawner {
             raw,
             _marker: PhantomData,
         };
+        tracing::debug!("Task {}: Spawned", task.id());
 
         self.queue.schedule(task);
 
@@ -142,10 +147,7 @@ impl Spawner {
 
 impl Schedule for Queue {
     fn schedule(&self, task: Task) {
-        let id = task.id();
-        println!("Task {}: Borrowing queue for scheduling task!", id);
         self.borrow_mut().push_back(task);
-        println!("Task {}: Borrowed queue for scheduling task!", id);
     }
 }
 
