@@ -5,11 +5,12 @@ use std::marker::PhantomData;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 
+use super::context;
 use super::handle::Handle;
 use crate::io::reactor::Reactor;
 use crate::task::join::JoinHandle;
 use crate::task::raw::{RawTask, Schedule};
-use crate::task::task::Task;
+use crate::task::Task;
 
 pub struct Runtime {
     // Holds the reactor and task queue
@@ -18,10 +19,10 @@ pub struct Runtime {
     handle: Handle,
 }
 
-pub struct Inner {
-    // IO reactor
+struct Inner {
+    /// IO reactor
     reactor: Reactor,
-    // Queue that holds tasks
+    /// Queue that holds tasks
     queue: Queue,
 }
 
@@ -52,9 +53,6 @@ impl Runtime {
 
         let inner = RefCell::new(Inner { reactor, queue });
 
-        // Store handle in context
-        handle.register();
-
         Runtime { inner, handle }
     }
 
@@ -69,6 +67,8 @@ impl Runtime {
     }
 
     pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+        // Enter runtime context
+        let _enter = context::enter(self.handle.clone());
         self.inner.borrow_mut().block_on(future)
     }
 }

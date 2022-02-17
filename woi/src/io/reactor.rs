@@ -31,7 +31,6 @@ pub(crate) struct Inner {
     /// The event queue
     pub poll: Epoll,
     /// Collection of IO resources registered in the event queue
-    // TODO: Can I think of something nicer?
     pub sources: RefCell<Slab<Rc<IoSource>>>,
 }
 
@@ -81,7 +80,7 @@ impl Reactor {
 
 impl Handle {
     pub fn current() -> Self {
-        crate::runtime::handle::io()
+        crate::runtime::context::io()
     }
 
     pub fn inner(&self) -> Rc<Inner> {
