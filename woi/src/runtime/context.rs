@@ -4,19 +4,8 @@ use super::handle::Handle;
 use super::runtime::Spawner;
 use crate::io::reactor::Handle as IoHandle;
 
-
 thread_local! {
     static CONTEXT: RefCell<Option<Handle>> = RefCell::new(None)
-}
-
-pub(crate) fn enter(new: Handle) -> EnterGuard {
-    match CONTEXT.try_with(|ctx| {
-        ctx.borrow_mut().replace(new);
-        EnterGuard {}
-    }) {
-        Ok(enter_guard) => enter_guard,
-        Err(_) => panic!("Thread local destroyed")
-    }
 }
 
 pub(crate) struct EnterGuard();
@@ -29,6 +18,20 @@ impl Drop for EnterGuard {
         })
     }
 }
+
+/// Sets this [`Handle`] as the current [`Handle`]. Returns an
+/// [`EnterGuard`] which clears thread local storage once dropped
+pub(super) fn enter(new: Handle) -> EnterGuard {
+    match CONTEXT.try_with(|ctx| {
+        ctx.borrow_mut().replace(new);
+        EnterGuard {}
+    }) {
+        Ok(enter_guard) => enter_guard,
+        Err(_) => panic!("Thread local destroyed"),
+    }
+}
+
+// ===== Functions for retrieving handles =====
 
 pub(crate) fn io() -> IoHandle {
     match CONTEXT.try_with(|ctx| {
