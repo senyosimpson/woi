@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use super::handle::Handle;
+use super::runtime::Handle;
 use super::runtime::Spawner;
 use crate::io::reactor::Handle as IoHandle;
 

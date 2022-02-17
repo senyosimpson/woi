@@ -6,8 +6,7 @@ use std::rc::Rc;
 use std::task::{Context, Poll};
 
 use super::context;
-use super::handle::Handle;
-use crate::io::reactor::Reactor;
+use crate::io::reactor::{Handle as IoHandle, Reactor};
 use crate::task::join::JoinHandle;
 use crate::task::raw::{RawTask, Schedule};
 use crate::task::Task;
@@ -24,6 +23,15 @@ struct Inner {
     reactor: Reactor,
     /// Queue that holds tasks
     queue: Queue,
+}
+
+/// Handle to the runtime
+#[derive(Clone)]
+pub struct Handle {
+    /// Spawner responsible for spawning tasks onto the executor
+    pub(crate) spawner: Spawner,
+    /// Handle to the IO reactor
+    pub(crate) io: IoHandle,
 }
 
 #[derive(Clone)]
@@ -122,6 +130,14 @@ impl Inner {
                 }
             }
         }
+    }
+}
+
+// ===== impl Handle =====
+
+impl Handle {
+    pub fn spawn<F: Future>(&self, future: F) -> JoinHandle<F::Output> {
+        self.spawner.spawn(future)
     }
 }
 
