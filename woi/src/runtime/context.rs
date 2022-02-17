@@ -11,24 +11,21 @@ thread_local! {
 
 pub(crate) fn enter(new: Handle) -> EnterGuard {
     match CONTEXT.try_with(|ctx| {
-        let old = ctx.borrow_mut().replace(new);
-        EnterGuard(old)
+        ctx.borrow_mut().replace(new);
+        EnterGuard {}
     }) {
         Ok(enter_guard) => enter_guard,
         Err(_) => panic!("Thread local destroyed")
     }
 }
 
-pub(crate) struct EnterGuard(Option<Handle>);
-// pub(crate) struct EnterGuard();
+pub(crate) struct EnterGuard();
 
 impl Drop for EnterGuard {
     fn drop(&mut self) {
         tracing::debug!("Dropping enter guard");
         CONTEXT.with(|ctx| {
-            // *ctx.borrow_mut() = self.0.take();
             ctx.borrow_mut().take();
-            // self.0.take();
         })
     }
 }
