@@ -30,9 +30,6 @@ impl Drop for EnterGuard {
     }
 }
 
-// API wise this isn't that sound versus having context::io(). However
-// I've just put it here for the sake of simplicity. If there arises a
-// need to change this, I will.
 pub(crate) fn io() -> IoHandle {
     match CONTEXT.try_with(|ctx| {
         let ctx = ctx.borrow();
