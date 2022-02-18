@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::rc::Rc;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use super::context;
 use crate::io::reactor::{Handle as IoHandle, Reactor};
@@ -85,15 +85,14 @@ impl Runtime {
 
 impl Inner {
     pub fn block_on<F: Future>(&mut self, future: F) -> F::Output {
-        use std::task::Waker;
-
         crate::pin!(future);
 
-        let waker = unsafe { Waker::from_raw(dummy_raw_waker()) };
+        let waker = unsafe { Waker::from_raw(NoopWaker::waker()) };
         let cx = &mut Context::from_waker(&waker);
 
         loop {
             // If the future is ready, return the output
+            tracing::debug!("Polling `block_on` future");
             if let Poll::Ready(v) = future.as_mut().poll(cx) {
                 return v;
             }
@@ -167,20 +166,18 @@ impl Schedule for Queue {
     }
 }
 
-// Dummy raw waker for now
+// ===== No op waker =====
 
-use core::task::RawWaker;
-use core::task::RawWakerVTable;
+struct NoopWaker;
 
-fn dummy_raw_waker() -> RawWaker {
-    fn no_op(_: *const ()) {}
-    fn wake(_: *const ()) {
-        println!("JoinHandle waker awoken!");
+impl NoopWaker {
+    fn waker() -> RawWaker {
+        fn no_op(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            NoopWaker::waker()
+        }
+
+        let vtable = &RawWakerVTable::new(clone, no_op, no_op, no_op);
+        RawWaker::new(0 as *const (), vtable)
     }
-    fn clone(_: *const ()) -> RawWaker {
-        dummy_raw_waker()
-    }
-
-    let vtable = &RawWakerVTable::new(clone, wake, wake, no_op);
-    RawWaker::new(0 as *const (), vtable)
 }
