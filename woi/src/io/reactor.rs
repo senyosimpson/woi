@@ -53,8 +53,6 @@ impl Reactor {
 
     // Process new events
     pub fn react(&mut self, timeout: Option<Duration>) -> io::Result<()> {
-        // TODO: Figure out what the use case for the driver tick is here
-
         self.inner.poll.poll(&mut self.events, timeout)?;
 
         for event in self.events.iter() {
@@ -66,7 +64,6 @@ impl Reactor {
 
             let token = event.token();
             if let Some(io_source) = self.inner.sources.borrow().get(token.0) {
-                // TODO: Ensure the resource is not stale
                 io_source.set_readiness(event);
                 io_source.wake(event)
             }
@@ -96,13 +93,11 @@ impl Inner {
 
         let mut sources = self.sources.borrow_mut();
         let entry = sources.vacant_entry();
-        let tick = 0;
 
         let token = Token(entry.key());
         let io_source = Rc::new(IoSource {
             io,
             token,
-            tick,
             ..Default::default()
         });
 
