@@ -1,3 +1,0 @@
-module_inception = false
-new_ret_no_self = false
-zero_ptr = false
