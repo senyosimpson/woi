@@ -1,8 +1,13 @@
 {
-  "rust-analyzer.checkOnSave.command": "clippy",
-  "rust-analyzer.checkOnSave.extraArgs": [
-    "-A clippy::module_inception",
-    "-A clippy::new_ret_no_self",
-    "-A clippy::zero_ptr"
+  "rust-analyzer.checkOnSave.overrideCommand": [
+      "cargo",
+      "clippy",
+      "--all-targets",
+      "--message-format=json",
+      "--",
+      "-A clippy::module_inception",
+      "-A clippy::new_ret_no_self",
+      "-A clippy::zero_ptr",
+      "-A clippy::new_without_default",
   ]
 }
