@@ -10,8 +10,6 @@ use super::readiness::Readiness;
 pub(crate) struct IoSource {
     /// Raw file descriptor of the IO resource
     pub(crate) io: RawFd,
-    /// Contains the driver tick
-    pub(crate) tick: usize,
     /// Token tying io source to slot in reactor slab
     pub(crate) token: Token,
     /// Holds state on an io resource's readiness for
