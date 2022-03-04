@@ -12,16 +12,15 @@ fn main() {
         let (tx, rx) = mpsc::channel();
         woi::spawn(async {
             let tx = tx.clone();
-            println!("Sending message from handle 1");
-            tx.send("fly.io").unwrap()
+            println!("Sending message from task 1");
+            tx.send("task 1: fly.io").unwrap()
         });
 
         woi::spawn(async move {
-            println!("Sending message from handle one after sleeping");
+            println!("Sending message from task 2 after sleeping");
             sleep(Duration::from_secs(1)).await;
-            println!("Done sleeping. Sending message from handle one");
-            tx.send("hello world").unwrap();
-            println!("Sent message!");
+            println!("Done sleeping. Sending message from task 2");
+            tx.send("handle 2: hello world").unwrap();
         });
 
         let h2 = woi::spawn(async move {
