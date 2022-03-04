@@ -1,68 +1,62 @@
-// TcpListener, TcpStream, Incoming
-use std::{
-    io::{self, Read},
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use super::addr::ToSocketAddrs;
-use crate::io::AsyncRead;
-
-pub struct TcpListener {
-    inner: std::net::TcpListener,
-}
+use crate::io::{pollable::Pollable, AsyncRead, AsyncWrite};
 
 pub struct TcpStream {
-    inner: std::net::TcpStream,
+    inner: Pollable<std::net::TcpStream>,
 }
 
-impl TcpListener {
-    pub fn new(inner: std::net::TcpListener) -> io::Result<TcpListener> {
-        inner.set_nonblocking(true)?;
-        Ok(TcpListener { inner })
-    }
+impl TcpStream {
+    pub async fn connect<A: ToSocketAddrs>(addrs: A) -> io::Result<TcpStream> {
+        let mut last_err = None;
 
-    pub async fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<TcpListener> {
-        let mut err = None;
-
-        for addr in addr.to_socket_addrs().await? {
-            match std::net::TcpListener::bind(addr) {
-                Ok(listener) => return TcpListener::new(listener),
-                Err(e) => err = Some(e),
+        for addr in addrs.to_socket_addrs().await? {
+            match std::net::TcpStream::connect(addr) {
+                Ok(stream) => {
+                    stream.set_nonblocking(true)?;
+                    let pollable = Pollable::new(stream)?;
+                    return Ok(TcpStream { inner: pollable });
+                }
+                Err(e) => last_err = Some(e),
             }
         }
 
-        Err(err.unwrap_or_else(|| {
+        Err(last_err.unwrap_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "could not connect to any of the addresses",
+                "could not resolve to any of the addresses",
             )
         }))
     }
-
-    // pub async fn accept<A: ToSocketAddrs>(addr: A) -> io::Result<(net::TcpStream, SocketAddr)> {
-    // let listener = TcpListener::bind(addr).await?;
-    // // match listener.inner.accept() {
-
-    // // }
-    // }
-
-    pub fn local_addr() {}
-
-    pub fn ttl() {}
-
-    pub fn set_ttl() {}
 }
 
-impl TcpStream {}
-
 impl AsyncRead for TcpStream {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
-        match self.inner.read(buf) {
-            Ok(n) => return Poll::Ready(Ok(n)),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Poll::Pending,
-            Err(e) => return Poll::Ready(Err(e)) 
-        }
-        
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        self.inner.poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for TcpStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.inner.poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        todo!()
     }
 }
