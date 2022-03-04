@@ -1148,8 +1148,8 @@ woi::spawn(async {
 })
 ```
 
-To handle this, we have to use a panic guard. First, to show you how I've implemented it (also copied from
-Tokio)
+To handle this, we have to use a panic guard. First, to show you how I've implemented it (also copied
+from Tokio)
 
 ```rust
 fn poll_inner(status: &mut Status<F>, cx: &mut Context) -> Poll<()> {
