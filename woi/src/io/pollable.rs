@@ -20,6 +20,10 @@ pub(crate) struct Pollable<T> {
 }
 
 impl<T> Pollable<T> {
+    pub fn get_ref(&self) -> &T {
+        &self.io
+    }
+
     pub fn get_mut(&mut self) -> &mut T {
         &mut self.io
     }

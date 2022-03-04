@@ -1,4 +1,5 @@
 use std::io;
+use std::net::Shutdown;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -56,7 +57,7 @@ impl AsyncWrite for TcpStream {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        todo!()
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(self.inner.get_ref().shutdown(Shutdown::Write))
     }
 }
