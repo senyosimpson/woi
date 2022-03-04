@@ -1,0 +1,8 @@
+{
+  "rust-analyzer.checkOnSave.command": "clippy",
+  "rust-analyzer.checkOnSave.extraArgs": [
+    "-A clippy::module_inception",
+    "-A clippy::new_ret_no_self",
+    "-A clippy::zero_ptr"
+  ]
+}
