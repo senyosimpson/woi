@@ -1,4 +1,4 @@
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::unix::prelude::AsRawFd;
 use std::rc::Rc;
 use std::task::{Context, Poll};
@@ -67,9 +67,25 @@ impl<T: Read> Pollable<T> {
     }
 }
 
+impl<T: Write> Pollable<T> {
+    pub fn poll_write(&mut self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        loop {
+            ready!(self.poll_writable(cx))?;
+
+            match self.get_mut().write(buf) {
+                Ok(n) => return Poll::Ready(Ok(n)),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    // Clear readiness for the specific direction
+                    self.source.clear_readiness(Direction::Write)
+                }
+                Err(e) => return Poll::Ready(Err(e)),
+            }
+        }
+    }
+}
+
 impl<T> Drop for Pollable<T> {
     fn drop(&mut self) {
-        // Need to deregister sources when they are dropped
         let inner = self.handle.inner();
         let _ = inner.deregister(self.source.token);
     }
