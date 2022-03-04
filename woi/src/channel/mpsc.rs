@@ -132,12 +132,12 @@ impl<T> Channel<T> {
 
     fn incr_tx_count(&self) {
         let mut inner = self.inner.borrow_mut();
-        inner.tx_count = inner.tx_count + 1;
+        inner.tx_count += 1;
     }
 
     fn decr_tx_count(&self) {
         let mut inner = self.inner.borrow_mut();
-        inner.tx_count = inner.tx_count - 1;
+        inner.tx_count -= 1;
     }
 
     fn tx_count(&self) -> usize {

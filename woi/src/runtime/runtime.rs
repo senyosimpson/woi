@@ -55,7 +55,7 @@ impl Runtime {
 
         // Runtime handle
         let handle = Handle {
-            spawner: spawner.clone(),
+            spawner,
             io: io_handle,
         };
 

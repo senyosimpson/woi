@@ -101,7 +101,7 @@ impl Inner {
             ..Default::default()
         });
 
-        self.poll.add(io, interest, token.clone())?;
+        self.poll.add(io, interest, token)?;
 
         entry.insert(io_source.clone());
 

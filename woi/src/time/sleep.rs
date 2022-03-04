@@ -5,12 +5,12 @@ use std::time::Duration;
 
 use futures::ready;
 
-use crate::io::pollable::Pollable;
 use super::timer::Timer;
+use crate::io::pollable::Pollable;
 
 // Future that is returned from a call to `sleep`
 pub struct Sleep {
-    inner: Pollable<Timer>
+    inner: Pollable<Timer>,
 }
 
 impl Sleep {
@@ -21,6 +21,7 @@ impl Sleep {
         Sleep { inner }
     }
 }
+
 impl Future for Sleep {
     type Output = ();
 
@@ -28,7 +29,7 @@ impl Future for Sleep {
         // TODO: Improve error handling
         match ready!(self.inner.poll_readable(cx)) {
             Ok(()) => Poll::Ready(()),
-            Err(e) => panic!("timer error: {}", e)
+            Err(e) => panic!("timer error: {}", e),
         }
     }
 }

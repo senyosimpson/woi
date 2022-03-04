@@ -9,7 +9,7 @@ pub(crate) struct Header {
     pub state: State,
     pub waker: Option<Waker>,        // Why is this wrapped in UnsafeCell?
     pub vtable: &'static TaskVTable, // Why &'static? Think cause they are fns
-    pub id: TaskId
+    pub id: TaskId,
 }
 
 impl Header {
@@ -20,11 +20,10 @@ impl Header {
     pub fn wake_join_handle(&self) {
         match &self.waker {
             Some(waker) => waker.wake_by_ref(),
-            None => panic!("Missing waker!")
+            None => panic!("Missing waker!"),
         }
     }
 }
-
 
 /// A monotonic counter that is updated through interior
 /// mutability. Allows it used as a static while still

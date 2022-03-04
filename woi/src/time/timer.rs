@@ -73,6 +73,7 @@ mod timerfd {
         Ok(())
     }
 
+    #[allow(unused)]
     pub(super) fn get(fd: RawFd) -> io::Result<IntervalTimerSpec> {
         let mut spec = IntervalTimerSpec::default();
         let spec_ptr = &mut spec as *mut _ as *mut libc::itimerspec;
@@ -80,6 +81,7 @@ mod timerfd {
         Ok(spec)
     }
 
+    #[allow(unused)]
     pub(super) fn close(fd: RawFd) -> io::Result<()> {
         cvt(unsafe { libc::close(fd) })?;
         Ok(())
@@ -88,9 +90,9 @@ mod timerfd {
     // Converts C error codes into a Rust Result type
     fn cvt(result: i32) -> io::Result<i32> {
         if result < 0 {
-            return Err(io::Error::last_os_error());
+            Err(io::Error::last_os_error())
         } else {
-            return Ok(result);
+            Ok(result)
         }
     }
 }
@@ -103,7 +105,7 @@ mod tests {
     fn create_timer() {
         let duration = Duration::from_secs(3);
         let timer = Timer::new(duration);
-        assert_eq!(true, timer.is_ok());
+        assert!(timer.is_ok());
         let _ = timerfd::close(timer.unwrap().fd);
     }
 
@@ -111,7 +113,7 @@ mod tests {
     fn set_get_timer_ok() {
         let duration = Duration::from_secs(3);
         let timer = Timer::new(duration);
-        assert_eq!(true, timer.is_ok());
+        assert!(timer.is_ok());
 
         let timer = timer.unwrap();
         let spec = timerfd::get(timer.fd).unwrap();

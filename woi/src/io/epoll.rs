@@ -272,9 +272,9 @@ mod epoll {
     // Converts C error codes into a Rust Result type
     fn cvt(result: i32) -> io::Result<i32> {
         if result < 0 {
-            return Err(io::Error::last_os_error());
+            Err(io::Error::last_os_error())
         } else {
-            return Ok(result);
+            Ok(result)
         }
     }
 }

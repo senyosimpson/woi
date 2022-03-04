@@ -22,4 +22,3 @@ impl fmt::Debug for JoinError {
         }
     }
 }
-

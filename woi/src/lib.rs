@@ -1,6 +1,6 @@
+pub mod channel;
 pub mod io;
 pub mod net;
-pub mod channel;
 pub mod time;
 
 mod runtime;

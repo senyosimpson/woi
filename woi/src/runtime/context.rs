@@ -8,7 +8,7 @@ thread_local! {
     static CONTEXT: RefCell<Option<Handle>> = RefCell::new(None)
 }
 
-pub(crate) struct EnterGuard();
+pub(crate) struct EnterGuard;
 
 impl Drop for EnterGuard {
     fn drop(&mut self) {

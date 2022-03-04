@@ -5,7 +5,7 @@ use super::epoll::Event;
 const READABLE: usize = 1 << 0;
 const WRITABLE: usize = 1 << 1;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Default, PartialEq)]
 pub struct Readiness(usize);
 
 impl Readiness {
@@ -25,12 +25,6 @@ impl Readiness {
         }
 
         readiness
-    }
-}
-
-impl Default for Readiness {
-    fn default() -> Self {
-        Self(0)
     }
 }
 
