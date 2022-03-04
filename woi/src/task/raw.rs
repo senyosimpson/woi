@@ -71,7 +71,6 @@ where
         Self::drop_waker,
     );
 
-    #[allow(clippy::new_ret_no_self)]
     pub fn new(future: F, scheduler: S) -> NonNull<()> {
         let task_layout = Self::layout();
         unsafe {
@@ -85,7 +84,7 @@ where
 
             let header = Header {
                 id,
-                state: State::new(id),
+                state: State::new_with_id(id),
                 waker: None,
                 vtable: &TaskVTable {
                     poll: Self::poll,

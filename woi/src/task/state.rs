@@ -1,3 +1,5 @@
+use super::header::TaskId;
+
 // The task has been scheduled onto the executor
 const SCHEDULED: usize = 1 << 0;
 
@@ -40,23 +42,47 @@ const INITIAL_STATE: usize = (REF_ONE * 2) | SCHEDULED | JOIN_HANDLE;
 
 pub(crate) struct State {
     pub(crate) state: usize,
+    task_id: Option<TaskId>,
 }
 
 impl State {
+    #[allow(unused)]
     pub fn new() -> State {
         State {
             state: INITIAL_STATE,
+            task_id: None,
+        }
+    }
+
+    pub fn new_with_id(task_id: TaskId) -> State {
+        State {
+            state: INITIAL_STATE,
+            task_id: Some(task_id),
         }
     }
 
     pub fn ref_incr(&mut self) {
         self.state += REF_ONE;
-        tracing::debug!("Incr ref count. Value: {}", self.ref_count())
+
+        if let Some(task_id) = self.task_id {
+            tracing::debug!(
+                "Task {}: Incr ref count. Value: {}",
+                task_id,
+                self.ref_count()
+            )
+        }
     }
 
     pub fn ref_decr(&mut self) {
         self.state -= REF_ONE;
-        tracing::debug!("Decr ref count. Value: {}", self.ref_count())
+
+        if let Some(task_id) = self.task_id {
+            tracing::debug!(
+                "Task {}: Decr ref count. Value: {}",
+                task_id,
+                self.ref_count()
+            )
+        }
     }
 
     pub fn ref_count(&self) -> usize {
@@ -109,25 +135,41 @@ impl State {
     pub fn transition_to_complete(&mut self) {
         self.set_complete();
         self.unset_running();
-        tracing::debug!("Transitioned to complete. State: {}", self);
+        if let Some(task_id) = self.task_id {
+            tracing::debug!(
+                "Task {}: Transitioned to complete. State: {}",
+                task_id,
+                self
+            );
+        }
     }
 
     pub fn transition_to_running(&mut self) {
         self.set_running();
         self.unset_scheduled();
-        tracing::debug!("Transitioned to running. State: {}", self);
+        if let Some(task_id) = self.task_id {
+            tracing::debug!("Task {}: Transitioned to running. State: {}", task_id, self);
+        }
     }
 
     pub fn transition_to_idle(&mut self) {
         self.unset_running();
         self.unset_scheduled();
-        tracing::debug!("Transitioned to idle. State: {}", self);
+        if let Some(task_id) = self.task_id {
+            tracing::debug!("Task {}: Transitioned to idle. State: {}", task_id, self);
+        }
     }
 
     pub fn transition_to_scheduled(&mut self) {
         self.set_scheduled();
         self.unset_running();
-        tracing::debug!("Transitioned to scheduled. State: {}", self);
+        if let Some(task_id) = self.task_id {
+            tracing::debug!(
+                "Task {}: Transitioned to scheduled. State: {}",
+                task_id,
+                self
+            );
+        }
     }
 }
 
