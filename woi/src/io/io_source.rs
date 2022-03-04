@@ -13,8 +13,8 @@ pub(crate) struct IoSource {
     /// Token tying io source to slot in reactor slab
     pub(crate) token: Token,
     /// Holds state on an io resource's readiness for
-    /// reading and writing 
-    pub(crate) inner: RefCell<Inner>
+    /// reading and writing
+    pub(crate) inner: RefCell<Inner>,
 }
 
 #[derive(Clone, Default)]
@@ -120,7 +120,7 @@ impl IoSource {
         match res {
             Poll::Ready(Ok(())) => tracing::debug!("poll_readable returned Poll::Ready(ok)"),
             Poll::Ready(Err(_)) => tracing::debug!("poll_readable returned Poll::Ready(err)"),
-            Poll::Pending => tracing::debug!("poll_readable returned Poll::Pending")
+            Poll::Pending => tracing::debug!("poll_readable returned Poll::Pending"),
         }
         res
     }

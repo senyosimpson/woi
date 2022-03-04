@@ -5,7 +5,6 @@ use super::epoll::Event;
 const READABLE: usize = 1 << 0;
 const WRITABLE: usize = 1 << 1;
 
-
 #[derive(Clone, Copy, PartialEq)]
 pub struct Readiness(usize);
 

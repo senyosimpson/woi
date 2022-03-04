@@ -54,11 +54,11 @@ bitflags! {
 #[repr(i32)]
 pub(crate) enum CtlOp {
     /// Add an entry to the interest list
-    ADD = libc::EPOLL_CTL_ADD,
+    Add = libc::EPOLL_CTL_ADD,
     /// Modify the interest of an associated entry in the interest list
-    MOD = libc::EPOLL_CTL_MOD,
+    Mod = libc::EPOLL_CTL_MOD,
     /// Remove an entry from the interest list
-    DEL = libc::EPOLL_CTL_DEL,
+    Del = libc::EPOLL_CTL_DEL,
 }
 
 /// Associates an entry in the interest list to an [`Event`]
@@ -100,19 +100,19 @@ impl Epoll {
 
     pub fn add(&self, source: impl Source, interest: Interest, token: Token) -> io::Result<()> {
         let event = Event::new(interest, token);
-        epoll::ctl(self.fd, CtlOp::ADD, source.raw_fd(), Some(event))?;
+        epoll::ctl(self.fd, CtlOp::Add, source.raw_fd(), Some(event))?;
         Ok(())
     }
 
     pub fn delete(&self, source: impl Source) -> io::Result<()> {
-        epoll::ctl(self.fd, CtlOp::DEL, source.raw_fd(), None)?;
+        epoll::ctl(self.fd, CtlOp::Del, source.raw_fd(), None)?;
         Ok(())
     }
 
     #[allow(unused)]
     pub fn modify(&self, source: impl Source, interest: Interest, token: Token) -> io::Result<()> {
         let event = Event::new(interest, token);
-        epoll::ctl(self.fd, CtlOp::MOD, source.raw_fd(), Some(event))?;
+        epoll::ctl(self.fd, CtlOp::Mod, source.raw_fd(), Some(event))?;
         Ok(())
     }
 
