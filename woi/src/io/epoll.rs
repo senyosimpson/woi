@@ -14,8 +14,6 @@ use bitflags::bitflags;
 use libc;
 
 /// Provides functionality for interacting epoll.
-///
-/// # Usage
 pub struct Epoll {
     pub fd: RawFd,
 }
@@ -110,6 +108,8 @@ impl Epoll {
         epoll::ctl(self.fd, CtlOp::DEL, source.raw_fd(), None)?;
         Ok(())
     }
+
+    #[allow(unused)]
     pub fn modify(&self, source: impl Source, interest: Interest, token: Token) -> io::Result<()> {
         let event = Event::new(interest, token);
         epoll::ctl(self.fd, CtlOp::MOD, source.raw_fd(), Some(event))?;
