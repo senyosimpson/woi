@@ -835,6 +835,7 @@ this is a raw output of the current diagnostics
 <details>
 <summary>Diagnostic output</summary>
 
+<!-- markdownlint-disable MD013-->
 ```
 2022-03-04T08:31:58.110903Z DEBUG woi::runtime::runtime: Polling `block_on` future
 2022-03-04T08:31:58.110939Z DEBUG woi::runtime::runtime: Task 1: Spawned
@@ -908,7 +909,7 @@ Received message: handle 2: hello world
 Finished
 2022-03-04T08:31:59.111764Z DEBUG woi::io::epoll: Drop: epoll_fd=3
 ```
-
+<!-- markdownlint-restore -->
 </details>
 
 We can (somewhat) follow the lifecycle of a task through the program. I had to implement task ids as
@@ -1097,7 +1098,6 @@ passed in a dummy waker. I just formalised it here into its own struct and calle
 ```rust
 struct NoopWaker;
 
-#[allow(clippy::zero_ptr)]
 impl NoopWaker {
     fn waker() -> RawWaker {
         fn no_op(_: *const ()) {}

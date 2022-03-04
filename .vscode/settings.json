@@ -9,5 +9,15 @@
       "--allow=clippy::new_ret_no_self",
       "--allow=clippy::zero_ptr",
       "--allow=clippy::new_without_default",
-  ]
+  ],
+  "markdownlint.config": {
+    
+      "MD013": {
+        "line_length": 100
+      },
+      "MD034": false,
+      "MD040": false,
+      "MD024": false,
+      "MD033": false
+    },
 }
