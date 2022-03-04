@@ -5,10 +5,10 @@ use std::pin::Pin;
 use std::ptr::NonNull;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-use crate::task::header::Header;
-use crate::task::state::State;
-use crate::task::task::Task;
-use super::header::TaskId;
+use super::error::JoinError;
+use super::header::{Header, TaskId};
+use super::state::State;
+use super::task::Task;
 
 // The C representation means we have guarantees on
 // the memory layout of the task
@@ -29,12 +29,12 @@ pub(crate) struct RawTask<F: Future, S> {
 
 pub enum Status<F: Future> {
     Running(F),
-    Finished(F::Output),
+    Finished(super::Result<F::Output>),
     Consumed,
 }
 
 /// Memory layout of a task
-/// 
+///
 /// It contains both the memory layout and the offsets into
 /// memory in order to access the fields in the task
 pub struct TaskLayout {
@@ -46,7 +46,7 @@ pub struct TaskLayout {
 pub struct TaskVTable {
     pub(crate) poll: unsafe fn(*const ()),
     pub(crate) get_output: unsafe fn(*const (), *mut ()),
-    pub(crate) drop_join_handle: unsafe fn(*const ())
+    pub(crate) drop_join_handle: unsafe fn(*const ()),
 }
 
 // All schedulers must implement the Schedule trait. They
@@ -71,6 +71,7 @@ where
         Self::drop_waker,
     );
 
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(future: F, scheduler: S) -> NonNull<()> {
         let task_layout = Self::layout();
         unsafe {
@@ -89,7 +90,7 @@ where
                 vtable: &TaskVTable {
                     poll: Self::poll,
                     get_output: Self::get_output,
-                    drop_join_handle: Self::drop_join_handle
+                    drop_join_handle: Self::drop_join_handle,
                 },
             };
             (raw.header as *mut Header).write(header);
@@ -137,10 +138,10 @@ where
         }
     }
 
-    pub unsafe fn dealloc(ptr: *const()) {
+    pub unsafe fn dealloc(ptr: *const ()) {
         let raw = Self::from_ptr(ptr);
-        let header = &*(raw.header as *mut Header); 
-        
+        let header = &*(raw.header as *mut Header);
+
         tracing::debug!("Task {}: Deallocating", header.id);
 
         let layout = Self::layout();
@@ -152,7 +153,7 @@ where
     // Increments the number of references to the waker
     unsafe fn clone_waker(ptr: *const ()) -> RawWaker {
         let raw = Self::from_ptr(ptr);
-        let header = &mut *(raw.header as *mut Header); 
+        let header = &mut *(raw.header as *mut Header);
         header.state.ref_incr();
         RawWaker::new(ptr, &Self::RAW_WAKER_VTABLE)
     }
@@ -161,33 +162,34 @@ where
     // the task is destroyed if the reference count is 0
     unsafe fn drop_waker(ptr: *const ()) {
         let raw = Self::from_ptr(ptr);
-        let header = &mut *(raw.header as *mut Header); 
+        let header = &mut *(raw.header as *mut Header);
         header.state.ref_decr();
         if header.state.ref_count() == 0 {
             Self::dealloc(ptr)
         }
     }
 
-    // Wakes the task
+    /// Wakes the task
     // One requirement here is that it must be safe
     // to call `wake` even if the task has been driven to completion
     unsafe fn wake(ptr: *const ()) {
-        tracing::debug!("Waking raw task");
         let raw = Self::from_ptr(ptr);
         let header = &mut *(raw.header as *mut Header);
+        tracing::debug!("Task {}: Waking raw task", header.id);
 
         header.state.transition_to_scheduled();
-        // We get 1 reference count from the caller. We schedule a task which
-        // increases our reference count by one. 
+        // We get one reference count from the caller. We schedule a task which
+        // increases our reference count by one.
         Self::schedule(ptr);
         // We can now drop our reference from the caller
         Self::drop_waker(ptr);
     }
 
     unsafe fn wake_by_ref(ptr: *const ()) {
-        tracing::debug!("Waking raw task by ref");
         let raw = Self::from_ptr(ptr);
         let header = &mut *(raw.header as *mut Header);
+        tracing::debug!("Task {}: Waking raw task by ref", header.id);
+
         header.state.transition_to_scheduled();
         Self::schedule(ptr);
     }
@@ -210,56 +212,90 @@ where
 
     // Runs the future and updates its state
     unsafe fn poll(ptr: *const ()) {
+        use std::panic;
+
         let raw = Self::from_ptr(ptr);
         let header = &mut *(raw.header as *mut Header);
-        let id = header.id;
 
         let waker = Waker::from_raw(RawWaker::new(ptr, &Self::RAW_WAKER_VTABLE));
         let cx = &mut Context::from_waker(&waker);
 
-        let status = &mut *raw.status;
-        // TODO: Improve error handling
-        let future = match status {
-            Status::Running(future) => future,
-            _ => panic!("Wrong stage"),
-        };
-
         header.state.transition_to_running();
-        // Safety: The future is allocated on the heap and therefore we know
-        // it has a stable memory address
-        // NOTE: Not sure how to phrase this. We don't need to use crate::pin! here
-        // because we already have a mutable reference to the future
-        let future = Pin::new_unchecked(future);
-        match future.poll(cx) {
-            Poll::Ready(out) => {
-                tracing::debug!("Task {}: ready", id);
-                header.state.transition_to_complete();
-                if header.state.has_join_waker() {
-                    header.wake_join_handle();
-                }
 
-                *raw.status = Status::Finished(out)
-            }
+        let status = &mut *raw.status;
+        match Self::poll_inner(status, cx) {
             Poll::Pending => {
                 tracing::debug!("Task pending");
                 header.state.transition_to_idle();
             }
+            Poll::Ready(_) => {
+                header.state.transition_to_complete();
+                // Catch a panic if waking the JoinHandle or dropping the future
+                // panics. Since the task is already completed, we're not concerned
+                // about propagating the failure up to the caller
+                let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                    if header.state.has_join_waker() {
+                        header.wake_join_handle();
+                    } else {
+                        // Drop the future or output by replacing it with Consumed
+                        status.drop_future_or_output();
+                    }
+                }));
+            }
         }
+    }
+
+    fn poll_inner(status: &mut Status<F>, cx: &mut Context) -> Poll<()> {
+        use std::panic;
+
+        struct Guard<'a, F: Future> {
+            status: &'a mut Status<F>,
+        }
+
+        impl<'a, F: Future> Drop for Guard<'a, F> {
+            fn drop(&mut self) {
+                // If polling the future panics, we want to drop the future/output
+                // If dropping the future/output panics, we've wrapped the entire method in
+                // a panic::catch_unwind so we can return a JoinError
+                self.status.drop_future_or_output()
+            }
+        }
+
+        let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            let guard = Guard { status };
+            let res = guard.status.poll(cx);
+            // Successfully polled the future. Prevent the guard's destructor from running
+            mem::forget(guard);
+            res
+        }));
+
+        let output = match res {
+            Ok(Poll::Pending) => return Poll::Pending,
+            Ok(Poll::Ready(output)) => Ok(output),
+            Err(panic) => Err(JoinError::Panic(panic)),
+        };
+
+        // Store output in task. Ignore if the future panics on drop
+        let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            *status = Status::Finished(output);
+        }));
+
+        Poll::Ready(())
     }
 
     unsafe fn get_output(ptr: *const (), dst: *mut ()) {
         let raw = Self::from_ptr(ptr);
-        let dst = dst as *mut Poll<F::Output>;
+        let dst = dst as *mut Poll<super::Result<F::Output>>;
         // TODO: Improve error handling
         match mem::replace(&mut *raw.status, Status::Consumed) {
             Status::Finished(output) => {
-                *dst = Poll::Ready(output); 
-            },
+                *dst = Poll::Ready(output);
+            }
             _ => panic!("Could not retrieve output!"),
         }
     }
 
-    unsafe fn drop_join_handle(ptr: *const()) {
+    unsafe fn drop_join_handle(ptr: *const ()) {
         let raw = Self::from_ptr(ptr);
         let header = &mut *(raw.header as *mut Header);
 
@@ -271,6 +307,25 @@ where
         if header.state.ref_count() == 0 {
             Self::dealloc(ptr)
         }
+    }
+}
 
+// ====== impl Status =====
+
+impl<F: Future> Status<F> {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<F::Output> {
+        let future = match self {
+            Status::Running(future) => future,
+            _ => unreachable!("unexpected status"),
+        };
+
+        let future = unsafe { Pin::new_unchecked(future) };
+        future.poll(cx)
+
+        // if res.is_ready() { self.drop_future_or_output() }
+    }
+
+    fn drop_future_or_output(&mut self) {
+        *self = Status::Consumed
     }
 }

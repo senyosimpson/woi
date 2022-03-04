@@ -14,36 +14,44 @@ pub struct JoinHandle<T> {
 }
 
 impl<T> Future for JoinHandle<T> {
-    type Output = T;
+    type Output = super::Result<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let raw = self.raw.as_ptr();
-        let header = raw as *mut Header;
         let mut output = Poll::Pending;
 
         unsafe {
-            tracing::debug!("JoinHandle is complete: {}", (*header).state.is_complete());
+            let header = &mut *(raw as *mut Header);
 
-            if !(*header).state.is_complete() {
+            let id = header.id;
+            tracing::debug!(
+                "Task {}: JoinHandle is complete: {}",
+                id,
+                header.state.is_complete()
+            );
+
+            if !header.state.is_complete() {
                 // Register waker with the task
-                (*header).register_waker(cx.waker());
-                (*header).state.set_join_waker();
+                header.register_waker(cx.waker());
+                header.state.set_join_waker();
             } else {
-                tracing::debug!("JoinHandle ready");
-                ((*header).vtable.get_output)(self.raw.as_ptr(), &mut output as *mut _ as *mut ());
-                return output;
+                tracing::debug!("Task {}: JoinHandle ready", id);
+                (header.vtable.get_output)(self.raw.as_ptr(), &mut output as *mut _ as *mut ());
             }
-
-            return output;
         }
+
+        output
     }
 }
 
 impl<T> Drop for JoinHandle<T> {
     fn drop(&mut self) {
-        tracing::debug!("Dropping JoinHandle");
         let raw = self.raw.as_ptr();
         let header = raw as *mut Header;
-        unsafe { ((*header).vtable.drop_join_handle)(self.raw.as_ptr()) }
+
+        unsafe {
+            tracing::debug!("Task {}: Dropping JoinHandle", ((*header).id));
+            ((*header).vtable.drop_join_handle)(self.raw.as_ptr())
+        }
     }
 }
