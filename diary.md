@@ -770,3 +770,417 @@ impl Future for Sleep {
     }
 }
 ```
+
+## 4 March 2022
+
+It's been some time since I last documented changes. Here we go.
+
+### Diagnostics
+
+I started using [`tracing`](https://github.com/tokio-rs/tracing) to capture diagnostics about my runtime.
+This has proven to be invaluable in debugging some issues (namely reference counting and dropping resources).
+The glory of running a single-threaded runtime is that you can write code that actually runs in a deterministic
+fashion. For example
+
+```rust
+let rt = Runtime::new();
+rt.block_on(async {
+    let (tx, rx) = mpsc::channel();
+    woi::spawn(async {
+        let tx = tx.clone();
+        println!("Sending message from task 1");
+        tx.send("task 1: fly.io").unwrap()
+    });
+
+    woi::spawn(async move {
+        println!("Sending message from task 2 after sleeping");
+        sleep(Duration::from_secs(1)).await;
+        println!("Done sleeping. Sending message from task 2");
+        tx.send("task 2: hello world").unwrap();
+        println!("Sent message!");
+    });
+
+    let h2 = woi::spawn(async move {
+        println!("Received message: {}", rx.recv().await.unwrap());
+        println!("Received message: {}", rx.recv().await.unwrap());
+    });
+
+    h2.await.unwrap();
+});
+```
+
+We know that tasks are spawned in order and are processed in order. Therefore, the order of output
+here will be
+
+```
+Sending message from task 1
+Sending message from task 2 after sleeping
+Received message: task 1: fly.io
+Done sleeping. Sending message from task 2
+Received message: task 2: hello world
+```
+
+In steps
+
+1. The first task runs and sends the message. It does not have to yield at any point.
+2. The second task runs. It prints that it'll send a message after sleeping. It then yields.
+3. The third task runs. It receives the first message that was sent from task 1. It then yields as
+   it is attempting to receive a message but none has been sent yet.
+4. The second task wakes up after sleeping and sends its message
+5. The third task wakes up after receiving a message and prints it out
+
+We can then quite easily, track the lifecycle of a task. I have some ways to go to improve this but
+this is a raw output of the current diagnostics
+
+<details>
+<summary>Diagnostic output</summary>
+
+```
+2022-03-04T08:31:58.110903Z DEBUG woi::runtime::runtime: Polling `block_on` future
+2022-03-04T08:31:58.110939Z DEBUG woi::runtime::runtime: Task 1: Spawned
+2022-03-04T08:31:58.110951Z DEBUG woi::task::join: Task 1: Dropping JoinHandle
+2022-03-04T08:31:58.110962Z DEBUG woi::task::state: Task 1: Decr ref count. Value: 1
+2022-03-04T08:31:58.110973Z DEBUG woi::runtime::runtime: Task 2: Spawned
+2022-03-04T08:31:58.110981Z DEBUG woi::task::join: Task 2: Dropping JoinHandle
+2022-03-04T08:31:58.110988Z DEBUG woi::task::state: Task 2: Decr ref count. Value: 1
+2022-03-04T08:31:58.110996Z DEBUG woi::runtime::runtime: Task 3: Spawned
+2022-03-04T08:31:58.111007Z DEBUG woi::task::join: Task 3: JoinHandle is complete: false
+2022-03-04T08:31:58.111017Z DEBUG woi::runtime::runtime: Task 1: Popped off executor queue and running
+2022-03-04T08:31:58.111028Z DEBUG woi::task::state: Task 1: Transitioned to running. State: State { scheduled=false, running=true, complete=false, has_join_handle=false, has_join_waker=false, ref_count=1 }
+Sending message from handle 1
+2022-03-04T08:31:58.111043Z DEBUG woi::channel::mpsc: Dropping sender
+2022-03-04T08:31:58.111053Z DEBUG woi::task::state: Task 1: Transitioned to complete. State: State { scheduled=false, running=false, complete=true, has_join_handle=false, has_join_waker=false, ref_count=1 }
+2022-03-04T08:31:58.111063Z DEBUG woi::task::state: Task 1: Decr ref count. Value: 0
+2022-03-04T08:31:58.111073Z DEBUG woi::task::raw: Task 1: Deallocating
+2022-03-04T08:31:58.111082Z DEBUG woi::runtime::runtime: Task 2: Popped off executor queue and running
+2022-03-04T08:31:58.111090Z DEBUG woi::task::state: Task 2: Transitioned to running. State: State { scheduled=false, running=true, complete=false, has_join_handle=false, has_join_waker=false, ref_count=1 }
+Sending message from handle 2 after sleeping
+2022-03-04T08:31:58.111106Z DEBUG woi::io::reactor: Registering task in epoll
+2022-03-04T08:31:58.111122Z DEBUG woi::io::io_source: Invoking poll_readable
+2022-03-04T08:31:58.111133Z DEBUG woi::task::state: Task 2: Incr ref count. Value: 2
+2022-03-04T08:31:58.111144Z DEBUG woi::io::io_source: poll_readable returned Poll::Pending
+2022-03-04T08:31:58.111153Z DEBUG woi::task::raw: Task pending
+2022-03-04T08:31:58.111162Z DEBUG woi::task::state: Task 2: Transitioned to idle. State: State { scheduled=false, running=false, complete=false, has_join_handle=false, has_join_waker=false, ref_count=2 }
+2022-03-04T08:31:58.111171Z DEBUG woi::task::state: Task 2: Decr ref count. Value: 1
+2022-03-04T08:31:58.111179Z DEBUG woi::runtime::runtime: Task 3: Popped off executor queue and running
+2022-03-04T08:31:58.111187Z DEBUG woi::task::state: Task 3: Transitioned to running. State: State { scheduled=false, running=true, complete=false, has_join_handle=true, has_join_waker=true, ref_count=2 }
+Received message: handle 1: fly.io
+2022-03-04T08:31:58.111199Z DEBUG woi::task::state: Task 3: Incr ref count. Value: 3
+2022-03-04T08:31:58.111207Z DEBUG woi::task::raw: Task pending
+2022-03-04T08:31:58.111215Z DEBUG woi::task::state: Task 3: Transitioned to idle. State: State { scheduled=false, running=false, complete=false, has_join_handle=true, has_join_waker=true, ref_count=3 }
+2022-03-04T08:31:58.111224Z DEBUG woi::task::state: Task 3: Decr ref count. Value: 2
+2022-03-04T08:31:58.111232Z DEBUG woi::runtime::runtime: Polling `block_on` future
+2022-03-04T08:31:58.111239Z DEBUG woi::task::join: Task 3: JoinHandle is complete: false
+2022-03-04T08:31:58.111251Z DEBUG woi::runtime::runtime: Parking on epoll
+2022-03-04T08:31:59.111167Z DEBUG woi::io::epoll: Epoll: Received 1 events
+2022-03-04T08:31:59.111216Z DEBUG woi::io::reactor: Epoll: processing Event { token=0, interest=Interest { epollin=true, epollout=false, epollpri=false, epollhup=false, epollrdhup=false } }
+2022-03-04T08:31:59.111251Z DEBUG woi::task::raw: Task 2: Waking raw task
+2022-03-04T08:31:59.111269Z DEBUG woi::task::state: Task 2: Transitioned to scheduled. State: State { scheduled=true, running=false, complete=false, has_join_handle=false, has_join_waker=false, ref_count=1 }
+2022-03-04T08:31:59.111288Z DEBUG woi::task::state: Task 2: Incr ref count. Value: 2
+2022-03-04T08:31:59.111306Z DEBUG woi::task::state: Task 2: Decr ref count. Value: 1
+2022-03-04T08:31:59.111326Z DEBUG woi::runtime::runtime: Task 2: Popped off executor queue and running
+2022-03-04T08:31:59.111342Z DEBUG woi::task::state: Task 2: Transitioned to running. State: State { scheduled=false, running=true, complete=false, has_join_handle=false, has_join_waker=false, ref_count=1 }
+2022-03-04T08:31:59.111361Z DEBUG woi::io::io_source: Invoking poll_readable
+2022-03-04T08:31:59.111380Z DEBUG woi::io::io_source: poll_readable returned Poll::Ready(ok)
+2022-03-04T08:31:59.111398Z DEBUG woi::io::reactor: Deregistering task from epoll
+Done sleeping. Sending message from handle 2
+2022-03-04T08:31:59.111425Z DEBUG woi::task::raw: Task 3: Waking raw task by ref
+2022-03-04T08:31:59.111440Z DEBUG woi::task::state: Task 3: Transitioned to scheduled. State: State { scheduled=true, running=false, complete=false, has_join_handle=true, has_join_waker=true, ref_count=2 }
+2022-03-04T08:31:59.111458Z DEBUG woi::task::state: Task 3: Incr ref count. Value: 3
+2022-03-04T08:31:59.111473Z DEBUG woi::channel::mpsc: Dropping sender
+2022-03-04T08:31:59.111490Z DEBUG woi::task::state: Task 2: Transitioned to complete. State: State { scheduled=false, running=false, complete=true, has_join_handle=false, has_join_waker=false, ref_count=1 }
+2022-03-04T08:31:59.111508Z DEBUG woi::task::state: Task 2: Decr ref count. Value: 0
+2022-03-04T08:31:59.111524Z DEBUG woi::task::raw: Task 2: Deallocating
+2022-03-04T08:31:59.111539Z DEBUG woi::runtime::runtime: Task 3: Popped off executor queue and running
+2022-03-04T08:31:59.111554Z DEBUG woi::task::state: Task 3: Transitioned to running. State: State { scheduled=false, running=true, complete=false, has_join_handle=true, has_join_waker=true, ref_count=3 }
+Received message: handle 2: hello world
+2022-03-04T08:31:59.111579Z DEBUG woi::channel::mpsc: Dropping receiver
+2022-03-04T08:31:59.111596Z DEBUG woi::task::state: Task 3: Decr ref count. Value: 2
+2022-03-04T08:31:59.111612Z DEBUG woi::task::state: Task 3: Transitioned to complete. State: State { scheduled=false, running=false, complete=true, has_join_handle=true, has_join_waker=true, ref_count=2 }
+2022-03-04T08:31:59.111630Z DEBUG woi::task::state: Task 3: Decr ref count. Value: 1
+2022-03-04T08:31:59.111645Z DEBUG woi::runtime::runtime: Polling `block_on` future
+2022-03-04T08:31:59.111660Z DEBUG woi::task::join: Task 3: JoinHandle is complete: true
+2022-03-04T08:31:59.111677Z DEBUG woi::task::join: Task 3: JoinHandle ready
+2022-03-04T08:31:59.111693Z DEBUG woi::task::join: Task 3: Dropping JoinHandle
+2022-03-04T08:31:59.111708Z DEBUG woi::task::state: Task 3: Decr ref count. Value: 0
+2022-03-04T08:31:59.111723Z DEBUG woi::task::raw: Task 3: Deallocating
+2022-03-04T08:31:59.111741Z DEBUG woi::runtime::context: Dropping enter guard
+Finished
+2022-03-04T08:31:59.111764Z DEBUG woi::io::epoll: Drop: epoll_fd=3
+```
+
+</details>
+
+We can (somewhat) follow the lifecycle of a task through the program. I had to implement task ids as
+well. Due to my own tendency to over engineer (and for learning purposes), it turned out to be pretty
+non-trivial to do. The reason being, I wanted a static variable that is modifiable so that I could keep
+the tracking of the IDs with the struct that is responsible for generating them, rather than at the runtime.
+Usually, this is done with atomics. For [example](https://os.phil-opp.com/async-await/#executor-with-waker-support)
+
+```rust
+struct TaskId(u64);
+
+impl TaskId {
+    fn new() -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        TaskId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+    }
+}
+```
+
+However, since this is single-threaded, I didn't want to pay the cost of atomics. I figured, I could
+replicate it without. The key to doing so is to realise is that `AtomicU64` uses interior mutability.
+That is why we're able to update it even though it is a constant (since we're updating internal state,
+not reassigning the `NEXT_ID` variable). My solution
+
+```rust
+/// A monotonic counter that is updated through interior
+/// mutability. Allows it to be used as a static while still
+/// being able to be updated
+#[derive(Default)]
+struct Counter(Cell<u64>);
+
+#[derive(Clone, Copy)]
+pub(crate) struct TaskId(u64);
+
+// ===== impl Counter =====
+
+// Implement sync for counter to enable it to be used as
+// a static. It is safe to do so because we aren't sharing
+// it across threads
+unsafe impl Sync for Counter {}
+
+impl Counter {
+    const fn new() -> Counter {
+        Counter(Cell::new(0))
+    }
+
+    pub fn incr(&self) -> u64 {
+        let prev = self.0.get();
+        let new = prev + 1;
+        self.0.set(new);
+        new
+    }
+}
+
+// ===== impl TaskId =====
+
+impl TaskId {
+    pub fn new() -> Self {
+        static ID: Counter = Counter::new();
+        TaskId(ID.incr())
+    }
+}
+```
+
+Nice and simple. The `TaskId` is added to the header of the task and so we can easily fetch it whenever
+we need.
+
+The easier alternative would have been to keep the state of the ID in the runtime and pass it through
+the `spawn` function. However, I think this may have made for an uglier API (I'm not sure).
+
+### Reference counting
+
+After implementing diagnostics, I was able to figure out how reference counts were being updated throughout
+the lifetime of a task. This revealed two bugs (one which I knew).
+
+1. The reference count was not decreased on a call to `wake`
+2. The reference count was not increased on a call to `schedule`
+
+Starting with the second case. I had implemented some code that for the first time, rescheduled a task
+more than once. This ended up causing my task to get deallocated before completion. A task starts with
+a reference count of 2, 1 belonging to the `JoinHandle` and another to the task on the executor. They
+both point to the same point in memory where the tasks state is held. The task on the executor is created
+when it is spawned onto the runtime and dropped after it yields/completes. The bug is shown through the
+steps
+
+1. Start with reference count of 2
+2. Run the task in the queue (it's called a `Task`)
+3. When the `Task` yields/completes, decrement the reference count to 1. It now equals 1
+4. Reschedule the task
+5. When the `Task` yields/completes, decrement the reference count by 1. It now equals 0
+6. Deallocate task
+
+When trying to retrieve the output, it would give gibberish since the task is deallocated. The solution
+is to increment the reference count when a task is rescheduled since that creates a new `Task` which
+is pushed onto the executor queue.
+
+The first issue I knew was a problem since it is in the contract of `wake`. It takes ownership of the
+waker, therefore it had to decrement the reference count. However, since I didn't increment the reference
+count when scheduling a new task, decrementing the count on `wake` was causing my code to fail. With
+the second issue fixed, I just had to add the reference decrement.
+
+### Interior mutability runtime violation
+
+One of the most interesting bugs I've come across in recent times. My assumption is that it was due to
+what is called, lifetime extension. For an example and explanation of this, read this interesting [post](https://fasterthanli.me/articles/a-rust-match-made-in-hell).
+
+In my case, I had the code
+
+```rust
+while let Some(task) = self.queue.borrow_mut().pop_front() {
+    task.run();
+}
+```
+
+It started breaking when I implemented channels. The `Sender` stores a waker that calls `wake` whenever
+it sends a message. When `wake` is called, it pushes the task onto the *runtime*'s queue. That is the
+*same* that is being borrowed above. Therefore, we
+
+1. Borrow the queue to get the task and run it
+2. The task also needs to borrow the queue when it sends a message
+
+This breaks Rust's rules and crashes at runtime. The fix is simply
+
+```rust
+loop {
+    let task = self.queue.borrow_mut().pop_front();
+    match task {
+        Some(task) => {
+            task.run()
+        }
+        None => break,
+    }
+}
+```
+
+Weird right? In the first version, we have one expression. This means that during the entire `while let`
+loop, the queue is being borrowed. That is why when we need to borrow it again during the `task.run()`,
+we violate the rules. In the second version, we only borrow the queue to set `task`. That means
+any borrow in `task.run()` will be valid.
+
+### Dropping epoll and thread local context
+
+At some point, I realised that some objects were not being dropped at the end of execution. I realised
+because I had a `Drop` implementation for `Epoll` which just printed out it was getting dropped. After
+doing some digging, I found that the issue was because the thread local context variable still held a
+handle to the runtime which contained epoll. Thread local storage isn't subject to clean up at the end
+of program execution (as far as I know). This led me down a bit of a rabbit hold and I ended up implementing
+an RAII guard to do the clean up. I unashamedly stole this from Tokio.
+
+We have a guard
+
+```rust
+pub(crate) struct EnterGuard;
+
+impl Drop for EnterGuard {
+    fn drop(&mut self) {
+        tracing::debug!("Dropping enter guard");
+        CONTEXT.with(|ctx| {
+            ctx.borrow_mut().take();
+        })
+    }
+}
+```
+
+It's only purpose is to take the value outside of `CONTEXT`, thereby dropping it when `Drop` completes
+executing. We call it in the `block_on` function (the entry point of the runtime). When the `block_on`
+function completes, the enter guard is dropped, clearing the thread local context.
+
+```rust
+pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+    // Enter runtime context
+    let _enter = context::enter(self.handle.clone());
+    self.inner.borrow_mut().block_on(future)
+}
+```
+
+### No op waker
+
+For a while now, I've wondered if a context and waker is necessary for the `block_on` call. This waker
+is responsible for unparking a parked thread. It's used in multi-threaded runtimes so that one thread
+can signal to another to wakeup. However, for a single-threaded runtime, unparking yourself is impossible.
+I wasn't sure if it was necessary for any other functionality. One day I was looking at [Glommio](https://github.com/DataDog/glommio)
+and figured, if there was a necessity for this waker, it would be in there. To my amusement, they also
+passed in a dummy waker. I just formalised it here into its own struct and called it `NoopWaker`
+
+```rust
+struct NoopWaker;
+
+#[allow(clippy::zero_ptr)]
+impl NoopWaker {
+    fn waker() -> RawWaker {
+        fn no_op(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            NoopWaker::waker()
+        }
+
+        let vtable = &RawWakerVTable::new(clone, no_op, no_op, no_op);
+        RawWaker::new(0 as *const (), vtable)
+    }
+}
+```
+
+### Panics as errors
+
+As I was reading `async-task`, I remembered them having panic guards but never understood the reasoning
+behind it. I was looking into it and discovered its so that panics in tasks do not crash the entire
+program. This makes sense, we want async tasks to behave similar to threads - if they crash, only that
+task is impacted. The rest of the program can operate. We achieve this through panic guards and catching
+panics.
+
+#### Catching panics
+
+Catching panics uses [`panic::catch_unwind`](https://doc.rust-lang.org/std/panic/fn.catch_unwind.html).
+This returns a result that contains an error if the code within it panicked. We can then propagate this
+panic up to the `JoinHandle`. Panic guards are used to implement some behaviour while a panic is unwinding.
+When a panic occurs, Rust unwinds in the order of declaration and calls `Drop` on all the resources.
+We can take advantage of this as I will show later.
+
+There are two places we need to take care of panics:
+
+1. When we drop a future
+2. When we poll a future
+
+When we drop a future, it could panic for... reasons. We can catch this
+
+```rust
+let res = panic::catch_unwind(|| {
+    self.drop_future_or_output()
+});
+```
+
+Nice and simple. When we poll a future, we also need to take care of this. Someone may write code like
+
+```rust
+woi::spawn(async {
+    panic!("BE GONE!")
+})
+```
+
+To handle this, we have to use a panic guard. First, to show you how I've implemented it (also copied from
+Tokio)
+
+```rust
+fn poll_inner(status: &mut Status<F>, cx: &mut Context) -> Poll<()> {
+    use std::panic;
+
+    struct Guard<'a, F: Future> {
+        status: &'a mut Status<F>,
+    }
+
+    impl<'a, F: Future> Drop for Guard<'a, F> {
+        fn drop(&mut self) {
+            // If polling the future panics, we want to drop the future/output
+            // If dropping the future/output panics, we've wrapped the entire method in
+            // a panic::catch_unwind so we can return a JoinError
+            self.status.drop_future_or_output()
+        }
+    }
+
+    let res = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        let guard = Guard { status };
+        let res = guard.status.poll(cx);
+        // Successfully polled the future. Prevent the guard's destructor from running
+        mem::forget(guard);
+        res
+    }));
+    ...
+    ...
+}
+```
+
+What happens here is we wrap a call to `poll` in a panic guard. If the call to poll (`guard.status.poll`)
+panics, it will start unwinding the variables within the `panic::catch_unwind`.  Since we've created
+a guard, the guard's `Drop` implementation will run. This will drop the future. The error will be returned
+to the `JoinHandle`.
