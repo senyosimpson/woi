@@ -7,7 +7,7 @@ use core::task::{Context, Poll, Waker};
 use super::linked_list::LinkedList;
 
 pub struct Semaphore {
-    permits: Cell<u32>,
+    permits: Cell<usize>,
     waiters: RefCell<LinkedList>,
 }
 
@@ -27,13 +27,26 @@ pub struct Acquire<'a> {
 
 pub struct AcquireError;
 
-pub struct Permit {}
+// ===== impl Semaphore =====
 
 impl Semaphore {
-    pub fn new(permits: u32) -> Semaphore {
+    pub fn new(permits: usize) -> Semaphore {
         Semaphore {
             permits: Cell::new(permits),
             waiters: RefCell::new(LinkedList::new()),
+        }
+    }
+
+    pub(crate) fn release(&self) {
+        self.permits.set(self.permits.get() + 1);
+        tracing::debug!("Released permit. Available: {}", self.permits.get());
+
+        let mut waiters = self.waiters.borrow_mut();
+        if let Some(waiter) = waiters.pop_front() {
+            // TODO: Drop the waker?
+            if let Some(waker) = &waiter.waker {
+                waker.wake_by_ref()
+            }
         }
     }
 
@@ -41,7 +54,7 @@ impl Semaphore {
     ///
     /// If there are no permits left, a waker gets put into the semaphore
     /// waitlist and we wait until one is available
-    pub fn poll_acquire(
+    pub(crate) fn poll_acquire(
         &self,
         cx: &mut Context,
         waiter: &mut Waiter,
@@ -49,9 +62,11 @@ impl Semaphore {
         let permits = self.permits.get();
         if permits > 0 {
             self.permits.set(permits - 1);
+            tracing::debug!("Acquired permit. Available: {}", self.permits.get());
             return Poll::Ready(Ok(()));
         }
 
+        tracing::debug!("No permits available!");
         waiter.waker = Some(cx.waker().clone());
         let waiter_ptr = waiter as *const _ as *mut Waiter;
         self.waiters.borrow_mut().push_back(waiter_ptr);
@@ -64,6 +79,8 @@ impl Semaphore {
     }
 }
 
+// ===== impl Waiter =====
+
 impl Waiter {
     pub fn new() -> Waiter {
         Waiter {
@@ -74,9 +91,14 @@ impl Waiter {
     }
 }
 
+// ===== impl Acquire =====
+
 impl<'a> Acquire<'a> {
-    fn new(semaphore: &'a Semaphore) -> Acquire {
-        Acquire { semaphore, waiter: Waiter::new() }
+    pub fn new(semaphore: &'a Semaphore) -> Acquire {
+        Acquire {
+            semaphore,
+            waiter: Waiter::new(),
+        }
     }
 }
 

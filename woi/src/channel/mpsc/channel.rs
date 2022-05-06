@@ -1,12 +1,15 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::task::{Waker, Context, Poll};
+use std::task::{Context, Poll, Waker};
 
 use crate::channel::error::{SendError, TryRecvError};
+use crate::channel::semaphore::{Acquire, Semaphore};
 
 pub struct Channel<T> {
     // Inner state of the channel
     inner: RefCell<Inner<T>>,
+    // Controls access to the channel
+    semaphore: Semaphore,
 }
 
 struct Inner<T> {
@@ -27,10 +30,11 @@ enum State {
 }
 
 impl<T> Channel<T> {
-    pub fn new() -> Channel<T> {
+    pub fn new(size: usize) -> Channel<T> {
         Channel {
+            semaphore: Semaphore::new(size),
             inner: RefCell::new(Inner {
-                queue: VecDeque::new(),
+                queue: VecDeque::with_capacity(size),
                 tx_count: 1,
                 state: State::Open,
                 rx_waker: None,
@@ -63,6 +67,14 @@ impl<T> Channel<T> {
 
     pub fn tx_count(&self) -> usize {
         self.inner.borrow().tx_count
+    }
+
+    pub fn acquire(&self) -> Acquire<'_> {
+        Acquire::new(&self.semaphore)
+    }
+
+    pub fn release(&self) {
+        self.semaphore.release()
     }
 
     pub fn send(&self, message: T) -> Result<(), SendError<T>> {

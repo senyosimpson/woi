@@ -1,4 +1,4 @@
-//! A multi-producer, single-consumer queue for sending values between
+//! An unbounded multi-producer, single-consumer queue for sending values between
 //! asynchronous tasks.
 
 use std::rc::Rc;
@@ -9,7 +9,7 @@ use super::channel::Channel;
 use crate::channel::error::{SendError, TryRecvError};
 
 pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
-    let chan = Rc::new(Channel::new());
+    let chan = Rc::new(Channel::new(128));
     (Sender::new(chan.clone()), Receiver::new(chan))
 }
 

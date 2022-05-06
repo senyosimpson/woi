@@ -7,6 +7,7 @@ pub(crate) struct LinkedList {
     tail: *mut Waiter,
 }
 
+#[allow(unused)]
 impl LinkedList {
     pub fn new() -> LinkedList {
         LinkedList {
