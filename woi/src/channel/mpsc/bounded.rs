@@ -40,7 +40,7 @@ impl<T> Sender<T> {
     }
 
     pub async fn reserve(&self) -> Result<Permit<T>, SendError<()>> {
-        match self.chan.acquire().await {
+        match self.chan.semaphore().acquire().await {
             Ok(_) => {
                 let permit = Permit {
                     chan: self.chan.clone(),
@@ -104,6 +104,6 @@ impl<T> Permit<T> {
 
 impl<T> Drop for Permit<T> {
     fn drop(&mut self) {
-        self.chan.release()
+        self.chan.semaphore().release()
     }
 }

@@ -69,12 +69,8 @@ impl<T> Channel<T> {
         self.inner.borrow().tx_count
     }
 
-    pub fn acquire(&self) -> Acquire<'_> {
-        Acquire::new(&self.semaphore)
-    }
-
-    pub fn release(&self) {
-        self.semaphore.release()
+    pub fn semaphore(&self) -> &Semaphore {
+        &self.semaphore
     }
 
     pub fn send(&self, message: T) -> Result<(), SendError<T>> {
