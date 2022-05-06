@@ -1,7 +1,5 @@
 //! A multi-producer, single-consumer queue for sending values between
 //! asynchronous tasks.
-//!
-//! This *only* supports unbounded channels (for the sake of simplifiying implementation)
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -10,7 +8,7 @@ use std::task::{Context, Poll, Waker};
 
 use futures::future::poll_fn;
 
-use super::error::{SendError, TryRecvError};
+use crate::channel::error::{SendError, TryRecvError};
 
 pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
     let chan = Rc::new(Channel::new());
