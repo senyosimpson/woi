@@ -15,8 +15,12 @@ name = "join"
 path = "join.rs"
 
 [[example]]
-name = "channels"
-path = "channels.rs"
+name = "unbounded_channel"
+path = "unbounded_channel.rs"
+
+[[example]]
+name = "bounded_channel"
+path = "bounded_channel.rs"
 
 [[example]]
 name = "tcp_read"
@@ -29,3 +33,7 @@ path = "sleep.rs"
 [[example]]
 name = "panic"
 path = "panic.rs"
+
+[[example]]
+name = "drop_joinhandle"
+path = "drop_joinhandle.rs"
